@@ -1,0 +1,61 @@
+{
+  "pages": [
+    {
+      "path": "pages/activity/index",
+      "style": {
+        "navigationBarTitleText": "活动打卡大厅",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/gift/index",
+      "style": {
+        "navigationBarTitleText": "积分兑换商城",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/rank/index",
+      "style": {
+        "navigationBarTitleText": "积分排行榜",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/my/index",
+      "style": {
+        "navigationBarTitleText": "个人中心"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "学生活动打卡",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f5f6f8"
+  },
+  "tabBar": {
+    "color": "#909399",
+    "selectedColor": "#409EFF",
+    "borderStyle": "black",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "pagePath": "pages/activity/index",
+        "text": "活动打卡"
+      },
+      {
+        "pagePath": "pages/gift/index",
+        "text": "积分商城"
+      },
+      {
+        "pagePath": "pages/rank/index",
+        "text": "排行榜"
+      },
+      {
+        "pagePath": "pages/my/index",
+        "text": "我的"
+      }
+    ]
+  }
+}

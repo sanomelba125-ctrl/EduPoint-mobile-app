@@ -1,0 +1,30 @@
+{
+  "name": "学生活动打卡移动端",
+  "appid": "",
+  "description": "供学生进行活动签到打卡、查看积分、兑换礼品",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueCompiler": "uni-app",
+    "compilerVersion": 3
+  },
+  "quickapp": {},
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  },
+  "mp-alipay": {
+    "usingComponents": true
+  },
+  "h5": {
+    "title": "学生活动打卡与积分兑换平台",
+    "router": {
+      "mode": "hash"
+    }
+  }
+}
