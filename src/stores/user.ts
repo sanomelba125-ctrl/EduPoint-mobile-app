@@ -6,6 +6,7 @@ export interface StudentUserInfo {
   studentNo: string
   name: string
   avatar: string
+  phone?: string
   currentPoints: number
   totalPoints: number
   college?: string
@@ -17,6 +18,7 @@ const DEFAULT_USER_INFO: StudentUserInfo = {
   studentNo: '',
   name: '未登录',
   avatar: '',
+  phone: '',
   currentPoints: 0,
   totalPoints: 0,
   college: '',

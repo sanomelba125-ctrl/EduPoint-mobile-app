@@ -19,6 +19,21 @@ const gift = ref<GiftItem | null>(null)
 const quantity = ref(1)
 const submitting = ref(false)
 
+// 提货核验信息（默认带入学籍档案资料，亦支持编辑）
+const receiverName = ref(userInfo.value.name || '张晓明')
+const receiverPhone = ref(userInfo.value.phone || '13911110006')
+const receiverAddress = ref('大学生活动中心一楼 102 创客服务台')
+
+import { watch } from 'vue'
+watch(
+  () => userInfo.value,
+  (val) => {
+    if (val && val.name) receiverName.value = val.name
+    if (val && val.phone) receiverPhone.value = val.phone
+  },
+  { immediate: true }
+)
+
 // 兑换成功弹窗状态
 const showSuccessModal = ref(false)
 const exchangeResult = ref<GiftExchangeResult | null>(null)
@@ -77,9 +92,18 @@ const handleExchange = async () => {
     return
   }
 
+  const finalName = receiverName.value.trim() || userInfo.value.name || '张晓明'
+  const finalPhone = receiverPhone.value.trim() || userInfo.value.phone || '13911110006'
+  const finalAddress = receiverAddress.value.trim() || '大学生活动中心一楼 102 创客服务台'
+
+  if (!finalPhone) {
+    uni.showToast({ title: '请输入提货联系电话', icon: 'none' })
+    return
+  }
+
   uni.showModal({
     title: '确认兑换礼品',
-    content: `将消耗 ${totalCost.value} 积分兑换 ${quantity.value} 件「${gift.value.name}」，兑换后将生成现场提货码，是否确认？`,
+    content: `将消耗 ${totalCost.value} 积分兑换 ${quantity.value} 件「${gift.value.name}」，核销提货人：${finalName}（${finalPhone}），是否确认？`,
     confirmText: '立即兑换',
     cancelText: '再想想',
     success: async (res) => {
@@ -89,8 +113,9 @@ const handleExchange = async () => {
         const result = await exchangeGiftApi({
           giftId: gift.value!.id,
           quantity: quantity.value,
-          receiverName: userInfo.value.name || '学生',
-          receiverPhone: ''
+          receiverName: finalName,
+          receiverPhone: finalPhone,
+          receiverAddress: finalAddress
         })
 
         // 核心亮点：全局更新 Pinia 中的用户可用积分
@@ -151,7 +176,7 @@ onLoad((query: any) => {
       <view class="detail-card">
         <view class="points-row">
           <text class="unit-points">{{ gift.pointsCost }}</text>
-          <text class="unit-text">pts / 件</text>
+          <text class="unit-text">积分 / 件 (pts)</text>
         </view>
         <view class="detail-title">{{ gift.name }}</view>
         <view class="meta-row">
@@ -180,13 +205,35 @@ onLoad((query: any) => {
         </view>
 
         <view class="balance-calc-bar">
-          <text>当前可用余额: <text class="font-bold">{{ currentPoints }}</text> pts</text>
+          <text>当前可用余额: <text class="font-bold">{{ currentPoints }}</text> 积分</text>
           <text>
             扣除后剩余:
             <text :class="['font-bold', afterBalance >= 0 ? 'text-success' : 'text-danger']">
               {{ afterBalance }}
-            </text> pts
+            </text> 积分
           </text>
+        </view>
+      </view>
+
+      <!-- 提货核验信息 -->
+      <view class="detail-card">
+        <view class="section-header-row">
+          <text class="notice-title">提货核验信息</text>
+          <text class="tag-auto">已匹配学籍档案</text>
+        </view>
+        <view class="delivery-form">
+          <view class="form-row">
+            <text class="form-label">提货姓名</text>
+            <input class="form-input" v-model="receiverName" placeholder="提货人姓名" />
+          </view>
+          <view class="form-row">
+            <text class="form-label">联系电话</text>
+            <input class="form-input" v-model="receiverPhone" type="number" placeholder="现场核销联系电话" />
+          </view>
+          <view class="form-row">
+            <text class="form-label">自提地点</text>
+            <input class="form-input" v-model="receiverAddress" placeholder="自提服务点" />
+          </view>
         </view>
       </view>
 
@@ -207,7 +254,7 @@ onLoad((query: any) => {
       <view class="cost-summary">
         <view class="cost-label">合计所需积分</view>
         <view class="cost-number">
-          {{ totalCost }} <text class="cost-unit">pts</text>
+          {{ totalCost }} <text class="cost-unit">积分</text>
         </view>
       </view>
       <button
@@ -456,7 +503,49 @@ onLoad((query: any) => {
   font-size: 28rpx;
   font-weight: 600;
   color: #303133;
-  margin-bottom: 16rpx;
+}
+
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
+}
+
+.tag-auto {
+  font-size: 20rpx;
+  color: #67c23a;
+  background-color: #f0f9eb;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+}
+
+.delivery-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  background: #f8fafc;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid #ebeef5;
+}
+
+.form-label {
+  width: 160rpx;
+  font-size: 24rpx;
+  color: #606266;
+  font-weight: 500;
+}
+
+.form-input {
+  flex: 1;
+  font-size: 26rpx;
+  color: #303133;
 }
 
 .notice-list {
