@@ -37,6 +37,11 @@ const handleLogout = () => {
     }
   })
 }
+
+// 页面导航安全封装（避免模板直接调用全局 uni 导致 undefined）
+const navTo = (url: string) => {
+  uni.navigateTo({ url })
+}
 </script>
 
 <template>
@@ -99,7 +104,7 @@ const handleLogout = () => {
           show-extra-icon 
           clickable
           :extra-icon="{ color: '#67C23A', size: '22', type: 'cart' }" 
-          @click="uni.navigateTo({ url: '/pages/my/orders' })"
+          @click="navTo('/pages/my/orders')"
         />
         <uni-list-item 
           title="积分变动明细" 
@@ -107,7 +112,7 @@ const handleLogout = () => {
           show-extra-icon 
           clickable
           :extra-icon="{ color: '#E6A23C', size: '22', type: 'wallet' }" 
-          @click="uni.navigateTo({ url: '/pages/my/points' })"
+          @click="navTo('/pages/my/points')"
         />
         <uni-list-item 
           title="个人设置与账号" 
