@@ -10,7 +10,9 @@ export interface StudentUserInfo {
   currentPoints: number
   totalPoints: number
   college?: string
+  major?: string
   className?: string
+  gender?: number
 }
 
 const DEFAULT_USER_INFO: StudentUserInfo = {
@@ -22,7 +24,9 @@ const DEFAULT_USER_INFO: StudentUserInfo = {
   currentPoints: 0,
   totalPoints: 0,
   college: '',
-  className: ''
+  major: '',
+  className: '',
+  gender: 1
 }
 
 export const useUserStore = defineStore('user', () => {

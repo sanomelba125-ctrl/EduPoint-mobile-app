@@ -43,3 +43,22 @@ export function getStudentProfileApi(): Promise<StudentUserInfo> {
     method: 'GET'
   })
 }
+
+export interface StudentUpdateProfileParams {
+  name?: string
+  phone?: string
+  avatar?: string
+  gender?: number
+}
+
+/**
+ * 修改当前登录学生个人档案 (PUT /api/student/profile)
+ */
+export function updateStudentProfileApi(params: StudentUpdateProfileParams): Promise<StudentUserInfo> {
+  return request<StudentUserInfo>({
+    url: '/student/profile',
+    method: 'PUT',
+    data: params
+  })
+}
+

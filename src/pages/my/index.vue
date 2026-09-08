@@ -1,18 +1,44 @@
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
+import { getStudentProfileApi, updateStudentProfileApi } from '@/api/auth'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
 
-// 模拟快捷积分变更（便于测试 Pinia 跨页面实时响应）
-const handleAddPoints = (pts: number) => {
-  userStore.updatePoints(pts)
-  uni.showToast({
-    title: `已${pts > 0 ? '增加' : '扣除'} ${Math.abs(pts)} 积分`,
-    icon: 'none'
-  })
+// 编辑资料弹窗状态与表单
+const showEditModal = ref(false)
+const savingProfile = ref(false)
+const formName = ref('')
+const formPhone = ref('')
+const formGender = ref(1)
+
+// 首字头像徽章
+const avatarChar = computed(() => {
+  if (userInfo.value && userInfo.value.name && userInfo.value.name !== '未登录') {
+    return userInfo.value.name.charAt(0)
+  }
+  return '学'
+})
+
+// 刷新最新学生档案与积分
+const refreshProfile = async () => {
+  if (!userStore.isLoggedIn) return
+  try {
+    const profile = await getStudentProfileApi()
+    if (profile) {
+      userStore.setUserInfo(profile)
+    }
+  } catch (err) {
+    // 忽略刷新非阻塞错误
+  }
 }
+
+onShow(() => {
+  refreshProfile()
+})
 
 // 登录跳转
 const handleUserCardClick = () => {
@@ -21,11 +47,79 @@ const handleUserCardClick = () => {
   }
 }
 
+// 打开个人资料修改弹窗
+const openEditModal = () => {
+  if (!userStore.isLoggedIn) {
+    uni.navigateTo({ url: '/pages/login/index' })
+    return
+  }
+  formName.value = userInfo.value.name || ''
+  formPhone.value = userInfo.value.phone || ''
+  formGender.value = userInfo.value.gender ?? 1
+  showEditModal.value = true
+}
+
+const closeEditModal = () => {
+  showEditModal.value = false
+}
+
+// 提交个人资料修改
+const handleSaveProfile = async () => {
+  const nameTrimmed = formName.value.trim()
+  const phoneTrimmed = formPhone.value.trim()
+
+  if (!nameTrimmed) {
+    uni.showToast({ title: '姓名/昵称不能为空', icon: 'none' })
+    return
+  }
+  if (!phoneTrimmed) {
+    uni.showToast({ title: '联系电话不能为空', icon: 'none' })
+    return
+  }
+  if (!/^1[3-9]\d{9}$/.test(phoneTrimmed)) {
+    uni.showToast({ title: '请输入有效的11位手机号', icon: 'none' })
+    return
+  }
+
+  savingProfile.value = true
+  try {
+    const updated = await updateStudentProfileApi({
+      name: nameTrimmed,
+      phone: phoneTrimmed,
+      gender: formGender.value
+    })
+    // 同步更新全局 Pinia 与 Storage
+    userStore.setUserInfo({
+      name: updated.name || nameTrimmed,
+      phone: updated.phone || phoneTrimmed,
+      gender: updated.gender ?? formGender.value
+    })
+    uni.showToast({ title: '个人资料保存成功', icon: 'success' })
+    showEditModal.value = false
+  } catch (err: any) {
+    uni.showToast({ title: err.message || '保存失败，请稍后重试', icon: 'none' })
+  } finally {
+    savingProfile.value = false
+  }
+}
+
+// 安全说明弹窗
+const showSecurityNotice = () => {
+  uni.showModal({
+    title: '安全认证与令牌隔离说明',
+    content: '当前学生端采用独立专属 Student Token 与后端微服务交互，与管理员端物理隔离，保障学籍档案、学分资产与兑换隐私绝对安全。',
+    showCancel: false,
+    confirmText: '我知道了'
+  })
+}
+
 // 退出登录
 const handleLogout = () => {
   uni.showModal({
     title: '提示',
-    content: '确认退出当前账号吗？',
+    content: '确认退出当前学籍账号吗？',
+    confirmText: '退出',
+    cancelText: '取消',
     success: (res) => {
       if (res.confirm) {
         userStore.logout()
@@ -38,7 +132,7 @@ const handleLogout = () => {
   })
 }
 
-// 页面导航安全封装（避免模板直接调用全局 uni 导致 undefined）
+// 页面导航安全封装
 const navTo = (url: string) => {
   uni.navigateTo({ url })
 }
@@ -46,86 +140,213 @@ const navTo = (url: string) => {
 
 <template>
   <view class="my-page">
-    <!-- 用户信息头部卡片 -->
-    <view class="user-card" @click="handleUserCardClick">
-      <view class="avatar-wrap">
-        <image 
-          class="avatar" 
-          :src="userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'" 
-          mode="aspectFill" 
-        />
-      </view>
-      <view class="user-info">
-        <text class="user-name">{{ userInfo.name || '点击登录 / 认证学籍' }}</text>
-        <text class="user-no">{{ userInfo.studentNo ? `学号: ${userInfo.studentNo}` : '未登录状态' }}</text>
+    <!-- 顶部学生主卡片 (深蓝旗舰渐变) -->
+    <view class="my-hero-card" @click="handleUserCardClick">
+      <view class="user-profile-row">
+        <!-- 头像区 -->
+        <view class="profile-avatar-box">
+          <image
+            v-if="userInfo.avatar"
+            class="avatar-img"
+            :src="userInfo.avatar"
+            mode="aspectFill"
+          />
+          <view v-else class="profile-avatar-letter">
+            {{ avatarChar }}
+          </view>
+        </view>
+
+        <!-- 学籍信息区 -->
+        <view class="user-meta-box">
+          <view class="name-line">
+            <text class="user-name">{{ userInfo.name || '点击登录 / 认证学籍' }}</text>
+            <text v-if="userStore.isLoggedIn" class="badge-certified">学籍已认证</text>
+          </view>
+          <view class="user-sub-line">
+            {{ userInfo.studentNo ? `学号：${userInfo.studentNo}` : '登录后查看学籍与学分' }}
+            <text v-if="userInfo.college"> · {{ userInfo.college }}</text>
+          </view>
+          <view v-if="userInfo.className || userInfo.major" class="user-class-line">
+            {{ userInfo.major || '' }} {{ userInfo.className || '' }}
+          </view>
+        </view>
+
+        <!-- 编辑资料按钮 -->
+        <view v-if="userStore.isLoggedIn" class="edit-profile-btn" @click.stop="openEditModal">
+          <text>编辑资料</text>
+        </view>
       </view>
     </view>
 
-    <!-- 核心响应式资产卡片（基于 Pinia 状态管理） -->
-    <uni-card margin="12px" :is-shadow="true" class="points-card">
-      <view class="points-header">
-        <text class="points-title">我的学分与积分</text>
-        <uni-tag text="Pinia 全局响应" type="success" size="small" />
+    <!-- 双积分浮动卡片 -->
+    <view class="dual-points-card">
+      <view class="point-box cur" @click="navTo('/pages/my/points')">
+        <text class="point-box-title">可用积分 (current)</text>
+        <text class="point-box-val">{{ userInfo.currentPoints }}</text>
+        <text class="point-box-sub">用于礼品兑换抵扣 &gt;</text>
       </view>
-      <view class="points-stats">
-        <view class="stat-item">
-          <text class="stat-num highlight">{{ userInfo.currentPoints }}</text>
-          <text class="stat-label">可用积分余额</text>
-        </view>
-        <view class="stat-divider" />
-        <view class="stat-item">
-          <text class="stat-num">{{ userInfo.totalPoints }}</text>
-          <text class="stat-label">累计获取积分</text>
-        </view>
-      </view>
-      
-      <!-- 快捷测试条：便于测试跨页面积分响应 -->
-      <view class="quick-actions">
-        <text class="quick-title">协同开发测试（实时驱动全局状态）:</text>
-        <view class="btn-group">
-          <button class="mini-btn add" @click="handleAddPoints(50)">+50 积分</button>
-          <button class="mini-btn sub" @click="handleAddPoints(-20)">-20 积分</button>
-        </view>
-      </view>
-    </uni-card>
 
-    <!-- 业务功能菜单列表 (uni-ui 基础组件演示) -->
-    <view class="menu-section">
-      <uni-list>
-        <uni-list-item 
-          title="我的活动打卡" 
-          show-arrow 
-          show-extra-icon 
-          :extra-icon="{ color: '#409EFF', size: '22', type: 'calendar' }" 
-        />
-        <uni-list-item 
-          title="我的礼品兑换" 
-          show-arrow 
-          show-extra-icon 
-          clickable
-          :extra-icon="{ color: '#67C23A', size: '22', type: 'cart' }" 
-          @click="navTo('/pages/my/orders')"
-        />
-        <uni-list-item 
-          title="积分变动明细" 
-          show-arrow 
-          show-extra-icon 
-          clickable
-          :extra-icon="{ color: '#E6A23C', size: '22', type: 'wallet' }" 
-          @click="navTo('/pages/my/points')"
-        />
-        <uni-list-item 
-          title="个人设置与账号" 
-          show-arrow 
-          show-extra-icon 
-          :extra-icon="{ color: '#909399', size: '22', type: 'gear' }" 
-        />
-      </uni-list>
+      <view class="point-box tot" @click="navTo('/pages/rank/index')">
+        <text class="point-box-title">累计总学分 (total)</text>
+        <text class="point-box-val">{{ userInfo.totalPoints }}</text>
+        <text class="point-box-sub">全校学分光荣榜 &gt;</text>
+      </view>
+    </view>
+
+    <!-- 四宫格入口金刚区 -->
+    <view class="grid-action-menu">
+      <view class="grid-slot" @click="navTo('/pages/activity/index')">
+        <view class="grid-icon-round icon-activity">
+          <text class="action-icon">🎯</text>
+        </view>
+        <text class="slot-text">我的活动</text>
+      </view>
+
+      <view class="grid-slot" @click="navTo('/pages/my/orders')">
+        <view class="grid-icon-round icon-orders">
+          <text class="action-icon">🎁</text>
+        </view>
+        <text class="slot-text">兑换订单</text>
+      </view>
+
+      <view class="grid-slot" @click="navTo('/pages/my/points')">
+        <view class="grid-icon-round icon-points">
+          <text class="action-icon">📊</text>
+        </view>
+        <text class="slot-text">学分流水</text>
+      </view>
+
+      <view class="grid-slot" @click="openEditModal">
+        <view class="grid-icon-round icon-profile">
+          <text class="action-icon">👤</text>
+        </view>
+        <text class="slot-text">资料设置</text>
+      </view>
+    </view>
+
+    <!-- 功能列表项 -->
+    <view class="cell-menu-list">
+      <view class="cell-menu-item" @click="openEditModal">
+        <view class="cell-left-part">
+          <text class="cell-icon">📱</text>
+          <text class="cell-title">学籍档案与联系电话</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-text">{{ userInfo.phone || '去完善电话' }}</text>
+          <text class="cell-arrow">&gt;</text>
+        </view>
+      </view>
+
+      <view class="cell-menu-item" @click="navTo('/pages/my/orders')">
+        <view class="cell-left-part">
+          <text class="cell-icon">🎫</text>
+          <text class="cell-title">现场提货核销凭证</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-warning">待提货核销 &gt;</text>
+        </view>
+      </view>
+
+      <view class="cell-menu-item" @click="navTo('/pages/rank/index')">
+        <view class="cell-left-part">
+          <text class="cell-icon">🏆</text>
+          <text class="cell-title">全校学分荣誉排行榜</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-text">查看排名 &gt;</text>
+        </view>
+      </view>
+
+      <view class="cell-menu-item" @click="showSecurityNotice">
+        <view class="cell-left-part">
+          <text class="cell-icon">🛡️</text>
+          <text class="cell-title">安全认证与令牌隔离</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-success">已受保护 &gt;</text>
+        </view>
+      </view>
     </view>
 
     <!-- 退出登录按钮 -->
-    <view class="logout-wrap">
-      <button class="logout-btn" @click="handleLogout">退出当前账号</button>
+    <view v-if="userStore.isLoggedIn" class="logout-wrap">
+      <button class="logout-btn" @click="handleLogout">退出当前学籍账号</button>
+    </view>
+
+    <!-- 编辑个人资料模态弹窗 -->
+    <view v-if="showEditModal" class="modal-backdrop" @click="closeEditModal">
+      <view class="modal-card" @click.stop>
+        <view class="modal-header">
+          <text class="modal-title">完善个人资料与学籍档案</text>
+          <text class="modal-close" @click="closeEditModal">×</text>
+        </view>
+
+        <view class="modal-body">
+          <!-- 只读学籍信息 -->
+          <view class="form-item readonly">
+            <text class="form-label">学号 (唯一认证)</text>
+            <view class="form-val-readonly">{{ userInfo.studentNo }}</view>
+          </view>
+          <view class="form-item readonly">
+            <text class="form-label">院系班级</text>
+            <view class="form-val-readonly">
+              {{ userInfo.college || '未绑定学院' }} · {{ userInfo.className || '未绑定班级' }}
+            </view>
+          </view>
+
+          <!-- 可编辑信息 -->
+          <view class="form-item">
+            <text class="form-label">姓名 / 昵称 <text class="required">*</text></text>
+            <input
+              class="form-input"
+              v-model="formName"
+              placeholder="请输入姓名或昵称"
+              maxlength="20"
+            />
+          </view>
+
+          <view class="form-item">
+            <text class="form-label">联系电话 (用于提货与通知) <text class="required">*</text></text>
+            <input
+              class="form-input"
+              v-model="formPhone"
+              type="number"
+              placeholder="请输入11位手机号"
+              maxlength="11"
+            />
+          </view>
+
+          <view class="form-item">
+            <text class="form-label">性别</text>
+            <view class="gender-radio-group">
+              <view
+                :class="['radio-pill', formGender === 1 ? 'active' : '']"
+                @click="formGender = 1"
+              >
+                👨 男生
+              </view>
+              <view
+                :class="['radio-pill', formGender === 2 ? 'active' : '']"
+                @click="formGender = 2"
+              >
+                👩 女生
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view class="modal-footer">
+          <button class="modal-cancel-btn" @click="closeEditModal">取消</button>
+          <button
+            class="modal-submit-btn"
+            :loading="savingProfile"
+            :disabled="savingProfile"
+            @click="handleSaveProfile"
+          >
+            保存修改
+          </button>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -133,151 +354,434 @@ const navTo = (url: string) => {
 <style scoped>
 .my-page {
   min-height: 100vh;
-  background-color: #f5f6f8;
-  padding-bottom: 40rpx;
+  background-color: #f8fafc;
+  padding-bottom: 80rpx;
 }
 
-.user-card {
-  background: linear-gradient(135deg, #409EFF 0%, #2b73d2 100%);
-  padding: 60rpx 40rpx 70rpx 40rpx;
+/* 顶部学生卡片 (深蓝旗舰渐变) */
+.my-hero-card {
+  background: linear-gradient(135deg, #1e3a8a 0%, #172554 100%);
+  color: #ffffff;
+  padding: 40rpx 32rpx 70rpx 32rpx;
+  position: relative;
+}
+
+.user-profile-row {
   display: flex;
   align-items: center;
-  color: #ffffff;
+  gap: 24rpx;
 }
 
-.avatar-wrap {
-  width: 120rpx;
-  height: 120rpx;
-  border-radius: 60rpx;
-  overflow: hidden;
-  border: 4rpx solid rgba(255, 255, 255, 0.6);
-  margin-right: 28rpx;
+.profile-avatar-box {
+  flex-shrink: 0;
 }
 
-.avatar {
-  width: 100%;
-  height: 100%;
-}
-
-.user-info {
+.profile-avatar-letter {
+  width: 100rpx;
+  height: 100rpx;
+  border-radius: 50rpx;
+  background: #ffffff;
+  color: #1e3a8a;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 40rpx;
+  font-weight: 700;
+  border: 4rpx solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.2);
+}
+
+.avatar-img {
+  width: 100rpx;
+  height: 100rpx;
+  border-radius: 50rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.5);
+}
+
+.user-meta-box {
+  flex: 1;
+}
+
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
 }
 
 .user-name {
-  font-size: 36rpx;
-  font-weight: bold;
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #ffffff;
 }
 
-.user-no {
-  font-size: 26rpx;
-  opacity: 0.85;
-  margin-top: 10rpx;
+.badge-certified {
+  font-size: 20rpx;
+  background-color: #10b981;
+  color: #ffffff;
+  padding: 2rpx 12rpx;
+  border-radius: 20rpx;
+  font-weight: 500;
 }
 
-.points-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24rpx;
-}
-
-.points-title {
-  font-size: 28rpx;
-  font-weight: 600;
-  color: #303133;
-}
-
-.points-stats {
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 16rpx 0 24rpx 0;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.stat-num {
-  font-size: 44rpx;
-  font-weight: bold;
-  color: #303133;
-}
-
-.stat-num.highlight {
-  color: #e6a23c;
-}
-
-.stat-label {
+.user-sub-line {
   font-size: 24rpx;
-  color: #909399;
+  color: #cbd5e1;
   margin-top: 8rpx;
 }
 
-.stat-divider {
-  width: 2rpx;
-  height: 60rpx;
-  background-color: #ebeef5;
-}
-
-.quick-actions {
-  margin-top: 20rpx;
-  padding-top: 20rpx;
-  border-top: 1rpx dashed #ebeef5;
-}
-
-.quick-title {
+.user-class-line {
   font-size: 22rpx;
-  color: #909399;
+  color: #94a3b8;
+  margin-top: 4rpx;
 }
 
-.btn-group {
-  display: flex;
-  gap: 16rpx;
-  margin-top: 12rpx;
-}
-
-.mini-btn {
-  flex: 1;
-  font-size: 24rpx;
-  line-height: 56rpx;
-  height: 56rpx;
+.edit-profile-btn {
+  padding: 8rpx 18rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.4);
   border-radius: 28rpx;
-  border: none;
+  font-size: 22rpx;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
-.mini-btn.add {
-  background-color: #f0f9eb;
-  color: #67c23a;
+/* 双积分对比大卡片 */
+.dual-points-card {
+  margin: -40rpx 32rpx 24rpx 32rpx;
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.05);
+  border: 1rpx solid #e2e8f0;
+  position: relative;
+  z-index: 10;
 }
 
-.mini-btn.sub {
-  background-color: #fef0f0;
-  color: #f56c6c;
+.point-box {
+  border-radius: 12rpx;
+  padding: 18rpx 20rpx;
+  display: flex;
+  flex-direction: column;
 }
 
-.menu-section {
-  margin: 24rpx;
+.point-box.cur {
+  background: #eff6ff;
+  border: 1rpx solid #bfdbfe;
+}
+
+.point-box.tot {
+  background: #faf5ff;
+  border: 1rpx solid #e9d5ff;
+}
+
+.point-box-title {
+  font-size: 22rpx;
+  font-weight: 500;
+}
+
+.point-box.cur .point-box-title {
+  color: #2563eb;
+}
+
+.point-box.tot .point-box-title {
+  color: #7e22ce;
+}
+
+.point-box-val {
+  font-size: 40rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 6rpx 0;
+}
+
+.point-box.cur .point-box-val {
+  color: #1d4ed8;
+}
+
+.point-box.tot .point-box-val {
+  color: #6b21a8;
+}
+
+.point-box-sub {
+  font-size: 20rpx;
+  color: #64748b;
+}
+
+/* 四宫格入口金刚区 */
+.grid-action-menu {
+  margin: 0 32rpx 24rpx 32rpx;
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 28rpx 16rpx;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
+  border: 1rpx solid #e2e8f0;
+}
+
+.grid-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.grid-icon-round {
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-activity {
+  background: #eff6ff;
+}
+
+.icon-orders {
+  background: #fef3c7;
+}
+
+.icon-points {
+  background: #faf5ff;
+}
+
+.icon-profile {
+  background: #ecfdf5;
+}
+
+.action-icon {
+  font-size: 40rpx;
+}
+
+.slot-text {
+  font-size: 24rpx;
+  font-weight: 500;
+  color: #334155;
+}
+
+/* 列表菜单 */
+.cell-menu-list {
+  margin: 0 32rpx 40rpx 32rpx;
+  background: #ffffff;
   border-radius: 16rpx;
   overflow: hidden;
-  background-color: #ffffff;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
+  border: 1rpx solid #e2e8f0;
 }
 
+.cell-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28rpx 24rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.cell-menu-item:last-child {
+  border-bottom: none;
+}
+
+.cell-left-part {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.cell-icon {
+  font-size: 32rpx;
+}
+
+.cell-title {
+  font-size: 28rpx;
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.cell-right-part {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.cell-sub-text {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.cell-sub-warning {
+  font-size: 24rpx;
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.cell-sub-success {
+  font-size: 24rpx;
+  color: #10b981;
+}
+
+.cell-arrow {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+/* 退出登录按钮 */
 .logout-wrap {
-  margin: 40rpx 24rpx;
+  margin: 0 32rpx;
 }
 
 .logout-btn {
-  background-color: #ffffff;
-  color: #f56c6c;
+  background: #ffffff;
+  color: #ef4444;
+  border: 1rpx solid #fecaca;
+  border-radius: 40rpx;
   font-size: 28rpx;
   font-weight: 500;
-  border-radius: 16rpx;
-  height: 80rpx;
-  line-height: 80rpx;
-  border: none;
+  height: 84rpx;
+  line-height: 84rpx;
+}
+
+/* 资料修改模态弹窗 */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 40rpx;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 640rpx;
+  background: #ffffff;
+  border-radius: 20rpx;
+  overflow: hidden;
+  box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.modal-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.modal-close {
+  font-size: 40rpx;
+  color: #94a3b8;
+  padding: 0 10rpx;
+  line-height: 1;
+}
+
+.modal-body {
+  padding: 30rpx;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.form-item {
+  margin-bottom: 24rpx;
+}
+
+.form-item.readonly {
+  background: #f8fafc;
+  padding: 16rpx;
+  border-radius: 10rpx;
+  border: 1rpx dashed #cbd5e1;
+}
+
+.form-label {
+  display: block;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 10rpx;
+}
+
+.required {
+  color: #ef4444;
+}
+
+.form-val-readonly {
+  font-size: 26rpx;
+  color: #64748b;
+}
+
+.form-input {
+  width: 100%;
+  height: 76rpx;
+  background: #f8fafc;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 10rpx;
+  padding: 0 20rpx;
+  font-size: 28rpx;
+  color: #0f172a;
+  box-sizing: border-box;
+}
+
+.gender-radio-group {
+  display: flex;
+  gap: 20rpx;
+}
+
+.radio-pill {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  background: #f1f5f9;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 10rpx;
+  font-size: 26rpx;
+  color: #475569;
+}
+
+.radio-pill.active {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 20rpx;
+  padding: 24rpx 30rpx 30rpx 30rpx;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+.modal-cancel-btn {
+  flex: 1;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 26rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  border-radius: 12rpx;
+}
+
+.modal-submit-btn {
+  flex: 1;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 26rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  border-radius: 12rpx;
 }
 </style>
