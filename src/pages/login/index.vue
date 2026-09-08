@@ -9,10 +9,14 @@ const studentNo = ref('')
 const password = ref('')
 const loading = ref(false)
 
-// 一键填入演示学生账号
+// 一键填入演示学生账号 (支持榜首与测试账号)
+const fillStudent = (no: string, pwd = '123456') => {
+  studentNo.value = no
+  password.value = pwd
+}
+
 const prefillTestStudent = () => {
-  studentNo.value = '2023010401'
-  password.value = '123456'
+  fillStudent('2023010401', '123456')
 }
 
 // 登录提交
@@ -39,14 +43,14 @@ const handleLogin = async () => {
     if (res && res.token) {
       userStore.setToken(res.token)
       const profile = res.userInfo || res.student || res.studentInfo || {
-        id: 1,
+        id: 6,
         studentNo: no,
-        name: '张晓明',
+        name: no === '2023010401' ? '张晓明' : '张伟',
         avatar: '',
-        currentPoints: 1250,
-        totalPoints: 2450,
-        college: '计算机科学与技术学院',
-        className: '软件工程 2301'
+        currentPoints: no === '2023010401' ? 350 : 180,
+        totalPoints: no === '2023010401' ? 420 : 320,
+        college: '信息工程学院',
+        className: no === '2023010401' ? '软工2301班' : '计科2201班'
       }
       userStore.setUserInfo(profile)
       uni.showToast({ title: '学籍认证成功', icon: 'success' })
@@ -63,19 +67,19 @@ const handleLogin = async () => {
         content: '该账号已被系统冻结（存在代刷卡异常记录），请携带证件前往学工处核验！',
         showCancel: false
       })
-    } else if (no === '2023010401' && (pwd === '123456' || pwd === 'admin123')) {
+    } else if ((no === '2023010401' || no === '20220101') && (pwd === '123456' || pwd === 'admin123')) {
       userStore.setToken('token_stu_mock_' + Date.now())
       userStore.setUserInfo({
-        id: 1,
-        studentNo: '2023010401',
-        name: '张晓明',
+        id: no === '2023010401' ? 6 : 1,
+        studentNo: no,
+        name: no === '2023010401' ? '张晓明' : '张伟',
         avatar: '',
-        currentPoints: 1250,
-        totalPoints: 2450,
-        college: '计算机科学与技术学院',
-        className: '软件工程 2301'
+        currentPoints: no === '2023010401' ? 350 : 180,
+        totalPoints: no === '2023010401' ? 420 : 320,
+        college: '信息工程学院',
+        className: no === '2023010401' ? '软工2301班' : '计科2201班'
       })
-      uni.showToast({ title: '演示模式已认证', icon: 'success' })
+      uni.showToast({ title: '已安全认证进入', icon: 'success' })
       setTimeout(() => {
         uni.switchTab({ url: '/pages/activity/index' })
       }, 600)
@@ -154,9 +158,15 @@ const handleLogin = async () => {
 
     <!-- 快捷演示填充按钮 -->
     <view class="quick-prefill-wrap">
-      <button class="prefill-btn" @click="prefillTestStudent">
-        一键填入演示学生 (张晓明 2023010401)
-      </button>
+      <view class="prefill-title">快捷载入系统内置学生体验：</view>
+      <view class="prefill-btns-row">
+        <button class="prefill-btn active-gold" @click="fillStudent('2023010401')">
+          👑 榜首：张晓明 (420分)
+        </button>
+        <button class="prefill-btn" @click="fillStudent('20220101')">
+          🥈 榜眼：张伟 (320分)
+        </button>
+      </view>
     </view>
   </view>
 </template>
@@ -294,20 +304,41 @@ const handleLogin = async () => {
 
 .quick-prefill-wrap {
   margin-top: auto;
-  padding-top: 40rpx;
+  padding-top: 36rpx;
   text-align: center;
 }
 
+.prefill-title {
+  font-size: 22rpx;
+  color: #909399;
+  margin-bottom: 16rpx;
+}
+
+.prefill-btns-row {
+  display: flex;
+  justify-content: center;
+  gap: 16rpx;
+}
+
 .prefill-btn {
-  background: transparent;
+  background: #ffffff;
   border: 2rpx solid #dcdfe6;
   color: #606266;
-  font-size: 24rpx;
+  font-size: 23rpx;
   height: 64rpx;
   line-height: 60rpx;
   border-radius: 32rpx;
-  display: inline-block;
-  padding: 0 28rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24rpx;
+  margin: 0;
+}
+
+.prefill-btn.active-gold {
+  border-color: #f7ba2a;
+  color: #b88230;
+  background-color: #fdf6ec;
 }
 
 .prefill-btn:active {
