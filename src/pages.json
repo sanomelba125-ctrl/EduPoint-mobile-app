@@ -32,6 +32,12 @@
       "style": {
         "navigationBarTitleText": "个人中心"
       }
+    },
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "学生身份认证"
+      }
     }
   ],
   "globalStyle": {

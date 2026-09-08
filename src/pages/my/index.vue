@@ -14,6 +14,13 @@ const handleAddPoints = (pts: number) => {
   })
 }
 
+// 登录跳转
+const handleUserCardClick = () => {
+  if (!userStore.isLoggedIn) {
+    uni.navigateTo({ url: '/pages/login/index' })
+  }
+}
+
 // 退出登录
 const handleLogout = () => {
   uni.showModal({
@@ -23,6 +30,9 @@ const handleLogout = () => {
       if (res.confirm) {
         userStore.logout()
         uni.showToast({ title: '已退出登录', icon: 'none' })
+        setTimeout(() => {
+          uni.navigateTo({ url: '/pages/login/index' })
+        }, 500)
       }
     }
   })
@@ -32,7 +42,7 @@ const handleLogout = () => {
 <template>
   <view class="my-page">
     <!-- 用户信息头部卡片 -->
-    <view class="user-card">
+    <view class="user-card" @click="handleUserCardClick">
       <view class="avatar-wrap">
         <image 
           class="avatar" 
@@ -41,8 +51,8 @@ const handleLogout = () => {
         />
       </view>
       <view class="user-info">
-        <text class="user-name">{{ userInfo.name || '张同学（测试学生）' }}</text>
-        <text class="user-no">学号: {{ userInfo.studentNo || '2023010101' }}</text>
+        <text class="user-name">{{ userInfo.name || '点击登录 / 认证学籍' }}</text>
+        <text class="user-no">{{ userInfo.studentNo ? `学号: ${userInfo.studentNo}` : '未登录状态' }}</text>
       </view>
     </view>
 
