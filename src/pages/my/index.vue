@@ -4,9 +4,13 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import { getStudentProfileApi, updateStudentProfileApi } from '@/api/auth'
+import { getMyOrdersApi } from '@/api/gift'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
+
+// 待提货核销订单数量（动态统计）
+const pendingOrdersCount = ref(0)
 
 // 编辑资料弹窗状态与表单
 const showEditModal = ref(false)
@@ -23,7 +27,7 @@ const avatarChar = computed(() => {
   return '学'
 })
 
-// 刷新最新学生档案与积分
+// 刷新最新学生档案与待提货订单统计
 const refreshProfile = async () => {
   if (!userStore.isLoggedIn) return
   try {
@@ -33,6 +37,14 @@ const refreshProfile = async () => {
     }
   } catch (err) {
     // 忽略刷新非阻塞错误
+  }
+
+  // 动态同步真实待提货（状态 1-待提货）订单数量
+  try {
+    const ordersRes = await getMyOrdersApi({ page: 1, size: 1, status: 1 })
+    pendingOrdersCount.value = ordersRes?.total ?? 0
+  } catch (err) {
+    pendingOrdersCount.value = 0
   }
 }
 
@@ -205,6 +217,7 @@ const navTo = (url: string) => {
       <view class="grid-slot" @click="navTo('/pages/my/orders')">
         <view class="grid-icon-round icon-orders">
           <text class="action-icon">🎁</text>
+          <view v-if="pendingOrdersCount > 0" class="badge-dot">{{ pendingOrdersCount }}</view>
         </view>
         <text class="slot-text">兑换订单</text>
       </view>
@@ -243,7 +256,8 @@ const navTo = (url: string) => {
           <text class="cell-title">现场提货核销凭证</text>
         </view>
         <view class="cell-right-part">
-          <text class="cell-sub-warning">待提货核销 &gt;</text>
+          <text v-if="pendingOrdersCount > 0" class="cell-sub-warning">{{ pendingOrdersCount }} 件待提货 &gt;</text>
+          <text v-else class="cell-sub-text">暂无待提货 &gt;</text>
         </view>
       </view>
 
@@ -535,6 +549,24 @@ const navTo = (url: string) => {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+
+.badge-dot {
+  position: absolute;
+  top: -8rpx;
+  right: -8rpx;
+  background-color: #ef4444;
+  color: #ffffff;
+  font-size: 20rpx;
+  min-width: 32rpx;
+  height: 32rpx;
+  line-height: 32rpx;
+  border-radius: 16rpx;
+  text-align: center;
+  padding: 0 6rpx;
+  font-weight: 700;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.2);
 }
 
 .icon-activity {
