@@ -105,7 +105,9 @@ const handleLogout = () => {
           title="积分变动明细" 
           show-arrow 
           show-extra-icon 
+          clickable
           :extra-icon="{ color: '#E6A23C', size: '22', type: 'wallet' }" 
+          @click="uni.navigateTo({ url: '/pages/my/points' })"
         />
         <uni-list-item 
           title="个人设置与账号" 

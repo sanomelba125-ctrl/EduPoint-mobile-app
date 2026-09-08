@@ -51,6 +51,13 @@
         "navigationBarTitleText": "我的兑换订单",
         "enablePullDownRefresh": true
       }
+    },
+    {
+      "path": "pages/my/points",
+      "style": {
+        "navigationBarTitleText": "积分收支明细",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {
