@@ -38,6 +38,19 @@
       "style": {
         "navigationBarTitleText": "学生身份认证"
       }
+    },
+    {
+      "path": "pages/gift/detail",
+      "style": {
+        "navigationBarTitleText": "礼品兑换详情"
+      }
+    },
+    {
+      "path": "pages/my/orders",
+      "style": {
+        "navigationBarTitleText": "我的兑换订单",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {

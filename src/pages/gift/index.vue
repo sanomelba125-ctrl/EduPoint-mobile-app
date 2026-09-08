@@ -1,307 +1,436 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
+import { getGiftListApi, type GiftItem } from '@/api/gift'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
 
-// 兑换数量（绑定 uni-number-box 步进器组件）
-const exchangeQuantity = ref(1)
+const currentTab = ref<'ALL' | 'AFFORDABLE' | 'FEATURED'>('ALL')
+const loading = ref(false)
+const giftList = ref<GiftItem[]>([])
 
-// 模拟礼品信息
-const giftItem = ref({
-  id: 1,
-  name: '校园限定定制保温杯 (500ml)',
-  category: '文创周边',
-  pointsPrice: 100,
-  stock: 15,
-  cover: 'https://images.unsplash.com/photo-1517256064527-09c73fc73e38?w=500&auto=format&fit=crop&q=60'
-})
+const currentPoints = computed(() => userInfo.value.currentPoints || 0)
 
-// 计算本次兑换所需总积分
-const totalNeededPoints = computed(() => {
-  return exchangeQuantity.value * giftItem.value.pointsPrice
-})
-
-// 改变步进器数量
-const onQuantityChange = (val: number) => {
-  exchangeQuantity.value = val
+const fetchGifts = async () => {
+  loading.value = true
+  try {
+    const res: any = await getGiftListApi({ status: 1, page: 1, size: 50 })
+    const list = res?.records || (Array.isArray(res) ? res : [])
+    giftList.value = list
+  } catch (err: any) {
+    uni.showToast({ title: err.message || '获取礼品失败', icon: 'none' })
+  } finally {
+    loading.value = false
+    uni.stopPullDownRefresh()
+  }
 }
 
-// 模拟提交兑换表单
-const handleExchange = () => {
-  const current = userInfo.value.currentPoints || 0
-  const need = totalNeededPoints.value
-
-  if (current < need) {
-    uni.showToast({
-      title: `积分不足！还差 ${need - current} 积分`,
-      icon: 'none'
-    })
-    return
+const filteredGifts = computed(() => {
+  const points = currentPoints.value
+  if (currentTab.value === 'AFFORDABLE') {
+    return giftList.value.filter(g => g.stock > 0 && g.pointsCost <= points)
   }
+  if (currentTab.value === 'FEATURED') {
+    // 推荐库存充裕或高价值礼品
+    return giftList.value.filter(g => g.stock > 5)
+  }
+  return giftList.value
+})
 
-  uni.showModal({
-    title: '确认兑换',
-    content: `将消耗 ${need} 积分兑换 ${exchangeQuantity.value} 个「${giftItem.value.name}」，是否继续？`,
-    success: (res) => {
-      if (res.confirm) {
-        // 核心亮点：扣减 Pinia Store 积分，所有页面立即响应更新！
-        userStore.updatePoints(-need)
-        giftItem.value.stock -= exchangeQuantity.value
-        exchangeQuantity.value = 1
+const handleTabChange = (tab: 'ALL' | 'AFFORDABLE' | 'FEATURED') => {
+  currentTab.value = tab
+}
 
-        uni.showToast({
-          title: '兑换成功！可在「我的兑换」中查看',
-          icon: 'success'
-        })
-      }
-    }
+const goToDetail = (id: number) => {
+  uni.navigateTo({
+    url: `/pages/gift/detail?id=${id}`
   })
 }
+
+const goToOrders = () => {
+  uni.navigateTo({
+    url: '/pages/my/orders'
+  })
+}
+
+const goToRank = () => {
+  uni.switchTab({
+    url: '/pages/rank/index'
+  })
+}
+
+onPullDownRefresh(() => {
+  fetchGifts()
+})
+
+onShow(() => {
+  fetchGifts()
+})
+
+onMounted(() => {
+  fetchGifts()
+})
 </script>
 
 <template>
-  <view class="gift-page">
-    <!-- 顶部常驻：当前积分余额提示栏（实时联动 Pinia） -->
-    <view class="balance-bar">
-      <view class="balance-left">
-        <text class="balance-label">当前我的可用积分</text>
-        <text class="balance-value">{{ userInfo.currentPoints }}</text>
+  <view class="gift-mall-container">
+    <!-- 积分卡片 -->
+    <view class="mall-banner-card">
+      <view class="mall-balance-top">
+        <view>
+          <view class="mall-balance-label">当前可用积分 (current_points)</view>
+          <view class="mall-balance-value">
+            {{ currentPoints }}
+            <text class="mall-pts-unit">pts</text>
+          </view>
+        </view>
+        <view class="balance-rank-badge" @click="goToRank">
+          积分光荣榜 >
+        </view>
       </view>
-      <navigator url="/pages/rank/index" class="balance-rank-btn">
-        查看排行榜 >
-      </navigator>
+
+      <view class="mall-balance-actions">
+        <view class="mall-action-link" @click="goToOrders">
+          <text class="action-icon">📋</text>
+          <text class="action-text">我的兑换订单 (出示提货码)</text>
+          <text class="action-arrow">></text>
+        </view>
+      </view>
     </view>
 
-    <!-- 轮播 Banner 广告位 (基于原生 swiper + uni-ui 规范) -->
-    <swiper class="gift-banner" circular autoplay interval="4000" indicator-dots indicator-active-color="#409EFF">
-      <swiper-item>
-        <view class="banner-item bg-blue">
-          <text class="banner-title">🎁 开学季积分兑换专区开启！</text>
-          <text class="banner-sub">参与社团活动即可免费获取丰厚文创</text>
+    <!-- 筛选分段横条 -->
+    <view class="mall-filter-strip">
+      <view class="filter-tabs">
+        <view
+          :class="['filter-tab-pill', currentTab === 'ALL' ? 'active' : '']"
+          @click="handleTabChange('ALL')"
+        >
+          全部商品
         </view>
-      </swiper-item>
-      <swiper-item>
-        <view class="banner-item bg-green">
-          <text class="banner-title">⚡ 周末限时积分翻倍打卡</text>
-          <text class="banner-sub">图书馆与体育馆打卡积分 +50%</text>
+        <view
+          :class="['filter-tab-pill', currentTab === 'AFFORDABLE' ? 'active' : '']"
+          @click="handleTabChange('AFFORDABLE')"
+        >
+          我能兑换
         </view>
-      </swiper-item>
-    </swiper>
-
-    <!-- 礼品详情与兑换卡片 (使用 uni-card 组件) -->
-    <uni-card 
-      :title="giftItem.name" 
-      :extra="'库存: ' + giftItem.stock" 
-      margin="12px"
-      :is-shadow="true"
-    >
-      <view class="gift-content">
-        <image class="gift-thumb" :src="giftItem.cover" mode="aspectFill" />
-        
-        <view class="gift-meta">
-          <view class="tag-row">
-            <uni-tag :text="giftItem.category" type="primary" size="small" />
-            <uni-tag text="正品校徽" type="warning" size="small" />
-          </view>
-          
-          <view class="price-row">
-            <text class="price-num">{{ giftItem.pointsPrice }}</text>
-            <text class="price-unit">积分/个</text>
-          </view>
+        <view
+          :class="['filter-tab-pill', currentTab === 'FEATURED' ? 'active' : '']"
+          @click="handleTabChange('FEATURED')"
+        >
+          精选推荐
         </view>
       </view>
+      <text class="strip-tip">凭提货码线下核销</text>
+    </view>
 
-      <!-- 兑换表单步进器组件 (使用 uni-number-box) -->
-      <view class="stepper-section">
-        <text class="stepper-label">兑换数量：</text>
-        <uni-number-box 
-          :min="1" 
-          :max="Math.min(giftItem.stock, 5)" 
-          :value="exchangeQuantity" 
-          @change="onQuantityChange"
-        />
-      </view>
-
-      <view class="total-bar">
-        <text class="total-desc">合计消耗：</text>
-        <text class="total-points">{{ totalNeededPoints }} 积分</text>
-      </view>
-
-      <!-- 兑换操作按钮 -->
-      <button 
-        class="exchange-btn" 
-        :disabled="giftItem.stock <= 0"
-        @click="handleExchange"
+    <!-- 礼品双列网格 -->
+    <view class="gift-grid">
+      <view
+        v-for="item in filteredGifts"
+        :key="item.id"
+        class="gift-item-card"
+        @click="goToDetail(item.id)"
       >
-        {{ giftItem.stock > 0 ? '立即确认兑换' : '已售罄' }}
-      </button>
-    </uni-card>
+        <view class="gift-thumb-box">
+          <image
+            v-if="item.image"
+            :src="item.image"
+            mode="aspectFill"
+            class="thumb-img"
+          />
+          <view v-else class="thumb-placeholder">
+            <text class="placeholder-icon">🎁</text>
+          </view>
+          <view v-if="item.stock <= 0" class="out-of-stock-mask">
+            已兑罄
+          </view>
+        </view>
+
+        <view class="gift-item-body">
+          <view class="gift-item-title">{{ item.name }}</view>
+          <view class="gift-pts-row">
+            <text class="pts-number">{{ item.pointsCost }}</text>
+            <text class="pts-unit"> pts</text>
+          </view>
+          <view class="gift-sub-row">
+            <text class="stock-text">库存 {{ item.stock }} 件</text>
+            <text
+              :class="[
+                'afford-status',
+                item.stock <= 0
+                  ? 'empty'
+                  : item.pointsCost <= currentPoints
+                  ? 'can'
+                  : 'cannot'
+              ]"
+            >
+              {{
+                item.stock <= 0
+                  ? '补货中'
+                  : item.pointsCost <= currentPoints
+                  ? '可兑换'
+                  : '积分不足'
+              }}
+            </text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 空状态 -->
+    <view v-if="!loading && filteredGifts.length === 0" class="empty-wrap">
+      <text class="empty-icon">📦</text>
+      <text class="empty-text">当前暂无可兑换的礼品</text>
+    </view>
   </view>
 </template>
 
 <style scoped>
-.gift-page {
+.gift-mall-container {
   min-height: 100vh;
   background-color: #f5f6f8;
   padding-bottom: 40rpx;
 }
 
-.balance-bar {
-  background: #ffffff;
-  padding: 24rpx 32rpx;
+.mall-banner-card {
+  margin: 24rpx 32rpx;
+  background: linear-gradient(135deg, #1e3a8a 0%, #172554 100%);
+  border-radius: 16rpx;
+  padding: 32rpx;
+  color: #ffffff;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.12);
+}
+
+.mall-balance-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1rpx solid #ebeef5;
 }
 
-.balance-left {
-  display: flex;
-  align-items: baseline;
-  gap: 16rpx;
-}
-
-.balance-label {
-  font-size: 26rpx;
-  color: #606266;
-}
-
-.balance-value {
-  font-size: 38rpx;
-  font-weight: bold;
-  color: #e6a23c;
-}
-
-.balance-rank-btn {
+.mall-balance-label {
   font-size: 24rpx;
-  color: #409eff;
+  color: #cbd5e1;
 }
 
-.gift-banner {
-  height: 200rpx;
-  margin: 20rpx 24rpx;
+.mall-balance-value {
+  font-size: 56rpx;
+  font-weight: 700;
+  color: #fbbf24;
+  line-height: 1.2;
+  margin-top: 8rpx;
 }
 
-.banner-item {
-  height: 100%;
-  border-radius: 16rpx;
-  padding: 30rpx;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+.mall-pts-unit {
+  font-size: 26rpx;
+  font-weight: normal;
+  color: #fde68a;
+  margin-left: 8rpx;
+}
+
+.balance-rank-badge {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1rpx solid rgba(255, 255, 255, 0.28);
+  border-radius: 28rpx;
+  padding: 8rpx 20rpx;
+  font-size: 22rpx;
   color: #ffffff;
 }
 
-.bg-blue {
-  background: linear-gradient(135deg, #36d1dc 0%, #5b86e5 100%);
+.mall-balance-actions {
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, 0.14);
 }
 
-.bg-green {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-}
-
-.banner-title {
-  font-size: 30rpx;
-  font-weight: bold;
-}
-
-.banner-sub {
-  font-size: 22rpx;
-  opacity: 0.9;
-  margin-top: 10rpx;
-}
-
-.gift-content {
+.mall-action-link {
   display: flex;
-  gap: 24rpx;
-  margin-bottom: 24rpx;
+  align-items: center;
+  gap: 10rpx;
+  font-size: 24rpx;
+  color: #e2e8f0;
 }
 
-.gift-thumb {
-  width: 180rpx;
-  height: 180rpx;
-  border-radius: 12rpx;
-  background-color: #f0f2f5;
+.action-icon {
+  font-size: 26rpx;
 }
 
-.gift-meta {
+.action-text {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
 }
 
-.tag-row {
+.action-arrow {
+  color: #94a3b8;
+  font-size: 24rpx;
+}
+
+.mall-filter-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8rpx 32rpx 20rpx;
+}
+
+.filter-tabs {
   display: flex;
   gap: 12rpx;
 }
 
-.price-row {
-  display: flex;
-  align-items: baseline;
-  gap: 6rpx;
-}
-
-.price-num {
-  font-size: 40rpx;
-  font-weight: bold;
-  color: #f56c6c;
-}
-
-.price-unit {
+.filter-tab-pill {
+  padding: 8rpx 24rpx;
+  border-radius: 28rpx;
   font-size: 24rpx;
+  font-weight: 500;
+  color: #606266;
+  background: #f0f2f5;
+  border: 1rpx solid #e4e7ed;
+}
+
+.filter-tab-pill.active {
+  background: #409eff;
+  color: #ffffff;
+  border-color: #409eff;
+}
+
+.strip-tip {
+  font-size: 22rpx;
   color: #909399;
 }
 
-.stepper-section {
+.gift-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20rpx;
+  padding: 0 32rpx 40rpx;
+}
+
+.gift-item-card {
+  background: #ffffff;
+  border-radius: 12rpx;
+  border: 1rpx solid #ebeef5;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.02);
+}
+
+.gift-thumb-box {
+  height: 240rpx;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.thumb-img {
+  width: 100%;
+  height: 100%;
+}
+
+.thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.placeholder-icon {
+  font-size: 80rpx;
+  opacity: 0.8;
+}
+
+.out-of-stock-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.gift-item-body {
+  padding: 18rpx;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.gift-item-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.4;
+  margin-bottom: 12rpx;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  height: 72rpx;
+}
+
+.gift-pts-row {
+  display: flex;
+  align-items: baseline;
+  color: #e6a23c;
+  font-weight: 700;
+  margin-top: auto;
+}
+
+.pts-number {
+  font-size: 34rpx;
+}
+
+.pts-unit {
+  font-size: 22rpx;
+  color: #909399;
+  font-weight: normal;
+}
+
+.gift-sub-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24rpx 0;
-  border-top: 1rpx solid #f0f2f5;
-  border-bottom: 1rpx solid #f0f2f5;
+  font-size: 22rpx;
+  margin-top: 8rpx;
 }
 
-.stepper-label {
-  font-size: 28rpx;
-  color: #303133;
+.stock-text {
+  color: #909399;
 }
 
-.total-bar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: baseline;
-  padding: 20rpx 0 30rpx 0;
-}
-
-.total-desc {
-  font-size: 26rpx;
-  color: #606266;
-}
-
-.total-points {
-  font-size: 32rpx;
-  font-weight: bold;
-  color: #e6a23c;
-}
-
-.exchange-btn {
-  background-color: #409eff;
-  color: #ffffff;
-  font-size: 30rpx;
+.afford-status.can {
+  color: #67c23a;
   font-weight: 500;
-  border-radius: 40rpx;
-  height: 80rpx;
-  line-height: 80rpx;
-  border: none;
 }
 
-.exchange-btn[disabled] {
-  background-color: #c0c4cc;
-  color: #ffffff;
+.afford-status.cannot {
+  color: #909399;
+}
+
+.afford-status.empty {
+  color: #f56c6c;
+}
+
+.empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 120rpx 0;
+  color: #909399;
+}
+
+.empty-icon {
+  font-size: 80rpx;
+  margin-bottom: 16rpx;
+}
+
+.empty-text {
+  font-size: 26rpx;
 }
 </style>

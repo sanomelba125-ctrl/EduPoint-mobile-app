@@ -97,7 +97,9 @@ const handleLogout = () => {
           title="我的礼品兑换" 
           show-arrow 
           show-extra-icon 
+          clickable
           :extra-icon="{ color: '#67C23A', size: '22', type: 'cart' }" 
+          @click="uni.navigateTo({ url: '/pages/my/orders' })"
         />
         <uni-list-item 
           title="积分变动明细" 
