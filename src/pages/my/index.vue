@@ -146,7 +146,11 @@ const handleLogout = () => {
 
 // 页面导航安全封装
 const navTo = (url: string) => {
-  uni.navigateTo({ url })
+  if (['/pages/activity/index', '/pages/gift/index', '/pages/rank/index', '/pages/my/index'].includes(url)) {
+    uni.switchTab({ url })
+  } else {
+    uni.navigateTo({ url })
+  }
 }
 </script>
 
@@ -207,7 +211,7 @@ const navTo = (url: string) => {
 
     <!-- 四宫格入口金刚区 -->
     <view class="grid-action-menu">
-      <view class="grid-slot" @click="navTo('/pages/activity/index')">
+      <view class="grid-slot" @click="navTo('/pages/activity/records')">
         <view class="grid-icon-round icon-activity">
           <text class="action-icon">🎯</text>
         </view>

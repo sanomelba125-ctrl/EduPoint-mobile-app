@@ -58,6 +58,27 @@
         "navigationBarTitleText": "积分收支明细",
         "enablePullDownRefresh": true
       }
+    },
+    {
+      "path": "pages/activity/detail",
+      "style": {
+        "navigationBarTitleText": "活动详情"
+      }
+    },
+    {
+      "path": "pages/activity/checkin",
+      "style": {
+        "navigationBarTitleText": "现场扫码考勤打卡",
+        "navigationBarBackgroundColor": "#0f172a",
+        "navigationBarTextStyle": "white"
+      }
+    },
+    {
+      "path": "pages/activity/records",
+      "style": {
+        "navigationBarTitleText": "我的活动记录",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {
