@@ -9,6 +9,7 @@ import {
   type ActivityItem,
   type ActivityStatusInfo
 } from '@/api/activity'
+import { getApiErrorMessage } from '@/utils/request'
 
 // 5 大活动分类
 const CATEGORIES = [
@@ -107,13 +108,13 @@ const handleCancelSignup = (act: ActivityItem) => {
       if (!res.confirm) return
       uni.showLoading({ title: '正在取消...', mask: true })
       try {
-        await cancelSignupActivityApi(act.id)
+        const message = await cancelSignupActivityApi(act.id)
         uni.hideLoading()
-        uni.showToast({ title: isWait ? '已退出候补' : '已取消报名', icon: 'success' })
+        uni.showToast({ title: message || (isWait ? '已退出候补' : '已取消报名'), icon: 'success' })
         fetchActivities()
       } catch (err: any) {
         uni.hideLoading()
-        uni.showToast({ title: err?.message || '取消失败', icon: 'none' })
+        uni.showToast({ title: getApiErrorMessage(err, '取消失败'), icon: 'none' })
       }
     }
   })
@@ -144,7 +145,7 @@ const handleQuickSignup = (act: ActivityItem) => {
         fetchActivities()
       } catch (err: any) {
         uni.hideLoading()
-        uni.showToast({ title: err?.message || (isFull ? '候补申请失败' : '报名失败'), icon: 'none' })
+        uni.showToast({ title: getApiErrorMessage(err, isFull ? '候补申请失败' : '报名失败'), icon: 'none' })
       }
     }
   })

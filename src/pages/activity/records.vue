@@ -6,6 +6,7 @@ import {
   cancelSignupActivityApi,
   type MyActivityItem
 } from '@/api/activity'
+import { getApiErrorMessage } from '@/utils/request'
 
 const currentTab = ref<number | undefined>(undefined) // undefined = 全部, 1 = 已报名, 2 = 已完成, 4 = 候补中, 3 = 已失效
 const loading = ref(false)
@@ -44,13 +45,13 @@ const handleCancelSignup = (actId: number, title: string) => {
       if (!res.confirm) return
       uni.showLoading({ title: '正在取消...', mask: true })
       try {
-        await cancelSignupActivityApi(actId)
+        const message = await cancelSignupActivityApi(actId)
         uni.hideLoading()
-        uni.showToast({ title: '已取消报名', icon: 'success' })
+        uni.showToast({ title: message || '已取消报名', icon: 'success' })
         fetchRecords()
       } catch (err: any) {
         uni.hideLoading()
-        uni.showToast({ title: err?.message || '取消失败', icon: 'none' })
+        uni.showToast({ title: getApiErrorMessage(err, '取消失败'), icon: 'none' })
       }
     }
   })

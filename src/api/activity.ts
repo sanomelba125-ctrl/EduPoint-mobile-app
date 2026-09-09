@@ -313,3 +313,23 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return Math.round(R * c)
 }
+
+export interface QrCodeVO {
+  activityId: number
+  nonce: string
+  sign: string
+  expireTime: string
+  validSeconds: number
+  qrContent: string
+}
+
+/**
+ * 2.6 获取活动实时动态防伪签到二维码 (GET /activity/{id}/qrcode)
+ */
+export async function getActivityQrCodeApi(activityId: number): Promise<QrCodeVO> {
+  return await request<QrCodeVO>({
+    url: `/activity/${activityId}/qrcode`,
+    method: 'GET'
+  })
+}
+

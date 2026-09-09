@@ -9,6 +9,7 @@ import {
   type ActivityItem,
   type ActivityStatusInfo
 } from '@/api/activity'
+import { getApiErrorMessage } from '@/utils/request'
 
 const activityId = ref<number>(1)
 const loading = ref(false)
@@ -96,7 +97,7 @@ const handleEnrollAction = async () => {
           uni.showToast({ title: '已退出候补队列', icon: 'success' })
           fetchDetail()
         } catch (err: any) {
-          uni.showToast({ title: err?.message || '退出候补失败', icon: 'none' })
+          uni.showToast({ title: getApiErrorMessage(err, '退出候补失败'), icon: 'none' })
         } finally {
           submitting.value = false
         }
@@ -124,7 +125,7 @@ const handleEnrollAction = async () => {
           uni.showToast({ title: res?.message || '候补申请成功', icon: 'success' })
           fetchDetail()
         } catch (err: any) {
-          uni.showToast({ title: err?.message || '候补申请失败', icon: 'none' })
+          uni.showToast({ title: getApiErrorMessage(err, '候补申请失败'), icon: 'none' })
         } finally {
           submitting.value = false
         }
@@ -144,7 +145,7 @@ const handleEnrollAction = async () => {
           uni.showToast({ title: res?.message || '报名成功', icon: 'success' })
           fetchDetail()
         } catch (err: any) {
-          uni.showToast({ title: err?.message || '报名失败', icon: 'none' })
+          uni.showToast({ title: getApiErrorMessage(err, '报名失败'), icon: 'none' })
         } finally {
           submitting.value = false
         }
@@ -171,11 +172,11 @@ const handleCancelSignup = () => {
       if (!mRes.confirm) return
       submitting.value = true
       try {
-        await cancelSignupActivityApi(act.id)
-        uni.showToast({ title: isWait ? '已退出候补队列' : '已取消报名，名额已释放', icon: 'success' })
+        const message = await cancelSignupActivityApi(act.id)
+        uni.showToast({ title: message || (isWait ? '已退出候补队列' : '已取消报名，名额已释放'), icon: 'success' })
         fetchDetail()
       } catch (err: any) {
-        uni.showToast({ title: err?.message || (isWait ? '退出候补失败' : '取消失败'), icon: 'none' })
+        uni.showToast({ title: getApiErrorMessage(err, isWait ? '退出候补失败' : '取消失败'), icon: 'none' })
       } finally {
         submitting.value = false
       }

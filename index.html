@@ -6,6 +6,12 @@
       var coverSupport = 'CSS' in window && typeof CSS.supports === 'function' && (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
       document.write('<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0' + (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
+    <script type="text/javascript">
+      window._AMapSecurityConfig = {
+        securityJsCode: '77b5607769c0e45c2ad22c6b454220ca'
+      }
+    </script>
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=f2bb704018d6fb8aafa3d1bcb880b62d&plugin=AMap.Geolocation,AMap.Geocoder,AMap.GeometryUtil"></script>
     <title>学生活动打卡移动端</title>
     <!--preload-links-->
     <!--app-context-->

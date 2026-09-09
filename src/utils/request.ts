@@ -58,6 +58,8 @@ export const request = <T = any>(options: RequestOptions): Promise<T> => {
 
           if (errorCode === 401) {
             uni.removeStorageSync('student_token')
+            uni.removeStorageSync('student_user_info')
+            uni.reLaunch({ url: '/pages/login/index' })
           }
 
           const apiError = new ApiErrorImpl(errorMsg, errorCode, 200)
@@ -91,3 +93,8 @@ export const request = <T = any>(options: RequestOptions): Promise<T> => {
 }
 
 export default request
+
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  const message = (error as { message?: unknown })?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback
+}

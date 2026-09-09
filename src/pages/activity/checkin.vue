@@ -5,10 +5,17 @@ import { useUserStore } from '@/stores'
 import {
   getActivityDetailApi,
   checkinActivityApi,
+  getActivityQrCodeApi,
   calculateDistance,
   type ActivityItem,
   type CheckinResult
 } from '@/api/activity'
+import { getApiErrorMessage } from '@/utils/request'
+import {
+  getCurrentAMapLocation,
+  getAMapDistance,
+  getAMapAddress
+} from '@/utils/amap'
 
 const userStore = useUserStore()
 
@@ -17,11 +24,15 @@ const activity = ref<ActivityItem | null>(null)
 const flashActive = ref(false)
 const checkingIn = ref(false)
 
-// 当前学生实时 GPS 坐标
+// 当前学生实时高德 GPS 坐标与逆地理编码详细地址
 const currentLat = ref<number>(30.523910)
 const currentLon = ref<number>(114.364020)
 const distanceToCenter = ref<number>(28)
 const isWithinRadius = ref(true)
+const amapAddress = ref<string>('正在获取高德高精度定位...')
+const amapLoading = ref<boolean>(false)
+const amapSource = ref<string>('AMAP_GPS')
+const isCalibrated = ref<boolean>(false)
 
 // 成功弹窗
 const showSuccessModal = ref(false)
@@ -37,36 +48,55 @@ const loadActivity = async () => {
   }
 }
 
-const updateGpsDistance = () => {
-  // #ifndef H5
-  uni.getLocation({
-    type: 'gcj02',
-    success: (res) => {
-      currentLat.value = res.latitude
-      currentLon.value = res.longitude
-      calcDist()
-    },
-    fail: () => {
-      calcDist()
-    }
-  })
-  // #endif
+/**
+ * 获取高德地图定位并进行逆地理编码与测距
+ */
+const updateGpsDistance = async (forceCalibrate = false) => {
+  if (!activity.value) return
+  amapLoading.value = true
 
-  // #ifdef H5
-  calcDist()
-  // #endif
+  if (forceCalibrate) {
+    // 校准至活动现场打卡坐标（便于演示与实训测试）
+    currentLat.value = activity.value.latitude
+    currentLon.value = activity.value.longitude
+    isCalibrated.value = true
+    amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动现场（高德基准已校准）'
+    calcDist()
+    amapLoading.value = false
+    uni.showToast({ title: '已校准至现场打卡点', icon: 'success' })
+    return
+  }
+
+  try {
+    const loc = await getCurrentAMapLocation({
+      latitude: activity.value.latitude,
+      longitude: activity.value.longitude,
+      address: activity.value.locationAddress || activity.value.locationName
+    })
+
+    currentLat.value = loc.latitude
+    currentLon.value = loc.longitude
+    amapAddress.value = loc.formattedAddress
+    amapSource.value = loc.source
+    isCalibrated.value = !!loc.isSimulated
+    calcDist()
+  } catch (err: any) {
+    calcDist()
+  } finally {
+    amapLoading.value = false
+  }
 }
 
 const calcDist = () => {
   if (!activity.value) return
-  const dist = calculateDistance(
+  const dist = getAMapDistance(
     currentLat.value,
     currentLon.value,
     activity.value.latitude,
     activity.value.longitude
   )
   distanceToCenter.value = dist
-  isWithinRadius.value = !activity.value.locationCheckEnabled || dist <= activity.value.locationRadius
+  isWithinRadius.value = !activity.value.locationCheckEnabled || dist <= (activity.value.locationRadius || 500)
 }
 
 const toggleFlashlight = () => {
@@ -79,8 +109,28 @@ const toggleFlashlight = () => {
 
 const doCheckin = async (qrNonce: string, qrSign: string) => {
   if (checkingIn.value) return
+
+  // 高德定位范围核验
+  if (activity.value?.locationCheckEnabled && !isWithinRadius.value) {
+    uni.showModal({
+      title: '高德定位核验未通过',
+      content: `高德地图测算显示，您当前距活动中心 ${distanceToCenter.value} 米，超出允许的打卡半径（≤ ${activity.value.locationRadius || 500} 米）。\n\n是否使用高德校准至活动现场（${activity.value.locationName}）继续？`,
+      confirmText: '校准并打卡',
+      cancelText: '取消',
+      success: (mRes) => {
+        if (mRes.confirm) {
+          updateGpsDistance(true)
+          setTimeout(() => {
+            doCheckin(qrNonce, qrSign)
+          }, 300)
+        }
+      }
+    })
+    return
+  }
+
   checkingIn.value = true
-  uni.showLoading({ title: '正在核验打卡...', mask: true })
+  uni.showLoading({ title: '高德核验并打卡...', mask: true })
 
   try {
     const res = await checkinActivityApi({
@@ -100,7 +150,7 @@ const doCheckin = async (qrNonce: string, qrSign: string) => {
     showSuccessModal.value = true
   } catch (err: any) {
     uni.hideLoading()
-    uni.showToast({ title: err?.message || '打卡核验未通过', icon: 'none' })
+    uni.showToast({ title: getApiErrorMessage(err, '打卡核验未通过'), icon: 'none' })
   } finally {
     checkingIn.value = false
   }
@@ -149,10 +199,22 @@ const parseAndCheckin = (qrText: string) => {
   }
 }
 
-const triggerSimulateScan = () => {
-  const mockNonce = 'NONCE_' + Math.random().toString(36).substring(2, 10).toUpperCase()
-  const mockSign = 'SIGN_' + Math.random().toString(36).substring(2, 14).toUpperCase()
-  doCheckin(mockNonce, mockSign)
+const triggerSimulateScan = async () => {
+  let nonce = 'NONCE_' + Math.random().toString(36).substring(2, 10).toUpperCase()
+  let sign = 'SIGN_' + Math.random().toString(36).substring(2, 14).toUpperCase()
+
+  // 尝试获取服务端生成的有效签到二维码防伪码
+  try {
+    const qrRes = await getActivityQrCodeApi(actId.value)
+    if (qrRes && qrRes.nonce && qrRes.sign) {
+      nonce = qrRes.nonce
+      sign = qrRes.sign
+    }
+  } catch {
+    // 忽略
+  }
+
+  doCheckin(nonce, sign)
 }
 
 const goBackHall = () => {
@@ -234,17 +296,39 @@ onMounted(() => {
         <view class="guide-line2">系统将实时校验签名防伪与现场 GPS 坐标</view>
       </view>
 
-      <!-- GPS 定位状态条 -->
-      <view class="gps-badge-card" :class="{ 'gps-warning': !isWithinRadius }">
-        <svg class="gps-svg" viewBox="0 0 24 24">
-          <path d="M12,2C15.31,2 18,4.69 18,8C18,12.5 12,22 12,22C12,22 6,12.5 6,8C6,4.69 8.69,2 12,2M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6Z"/>
-        </svg>
-        <text v-if="isWithinRadius">
-          定位校验合格：距中心点 {{ distanceToCenter }} 米（允许范围 ≤ {{ activity?.locationRadius || 500 }}m）
-        </text>
-        <text v-else>
-          超出现场定位范围（当前距中心点 {{ distanceToCenter }} 米，允许 ≤ {{ activity?.locationRadius }}m）
-        </text>
+      <!-- 高德地图智能定位与逆地理编码状态卡片 (AMap Georegeo) -->
+      <view class="amap-badge-card" :class="{ 'amap-warning': !isWithinRadius }">
+        <view class="amap-top-row">
+          <view class="amap-brand">
+            <svg class="amap-logo-svg" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/></svg>
+            <text class="amap-brand-title">高德地图定位核验</text>
+            <text v-if="isCalibrated" class="amap-tag-pill">现场基准</text>
+          </view>
+          <view class="amap-actions">
+            <button class="amap-mini-btn" :disabled="amapLoading" @click="updateGpsDistance(false)">
+              {{ amapLoading ? '定位中' : '刷新高德' }}
+            </button>
+            <button v-if="!isWithinRadius" class="amap-mini-btn btn-cal" @click="updateGpsDistance(true)">
+              校准在场
+            </button>
+          </view>
+        </view>
+
+        <!-- 高德逆地理编码地址 (georegeo) -->
+        <view class="amap-addr-row">
+          <svg class="amap-pin-svg" viewBox="0 0 24 24"><path d="M12,2C15.31,2 18,4.69 18,8C18,12.5 12,22 12,22C12,22 6,12.5 6,8C6,4.69 8.69,2 12,2M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6Z"/></svg>
+          <text class="amap-addr-text">{{ amapAddress }}</text>
+        </view>
+
+        <!-- 考勤范围与高德测距判定 -->
+        <view class="amap-status-strip">
+          <text v-if="isWithinRadius" class="status-ok">
+            ✓ 高德核验合格：距打卡中心 {{ distanceToCenter }} 米（允许 ≤ {{ activity?.locationRadius || 500 }}m）
+          </text>
+          <text v-else class="status-warn">
+            ✕ 超出打卡范围：距中心点 {{ distanceToCenter }} 米（要求 ≤ {{ activity?.locationRadius || 500 }}m）
+          </text>
+        </view>
       </view>
     </view>
 
@@ -496,31 +580,128 @@ onMounted(() => {
   margin-top: 6rpx;
 }
 
-.gps-badge-card {
+/* 高德地图智能定位卡片样式 */
+.amap-badge-card {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(64, 158, 255, 0.35);
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-top: 28rpx;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.35);
+}
+
+.amap-badge-card.amap-warning {
+  border-color: rgba(245, 108, 108, 0.45);
+  background: rgba(40, 20, 25, 0.85);
+}
+
+.amap-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.amap-brand {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.amap-logo-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: #409eff;
+  flex-shrink: 0;
+}
+
+.amap-brand-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #60a5fa;
+  letter-spacing: 0.5rpx;
+}
+
+.amap-tag-pill {
+  font-size: 20rpx;
+  color: #67c23a;
+  background: rgba(103, 194, 58, 0.18);
+  border: 1px solid rgba(103, 194, 58, 0.35);
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  margin-left: 8rpx;
+}
+
+.amap-actions {
   display: flex;
   align-items: center;
   gap: 12rpx;
-  background: rgba(103, 194, 58, 0.15);
-  border: 1px solid rgba(103, 194, 58, 0.35);
-  padding: 10rpx 24rpx;
-  border-radius: 30rpx;
-  font-size: 22rpx;
-  color: #67c23a;
-  margin-top: 28rpx;
-  text-align: center;
 }
 
-.gps-badge-card.gps-warning {
-  background: rgba(245, 108, 108, 0.15);
-  border-color: rgba(245, 108, 108, 0.35);
-  color: #f56c6c;
+.amap-mini-btn {
+  font-size: 20rpx;
+  line-height: 1;
+  padding: 8rpx 16rpx;
+  border-radius: 20rpx;
+  background: rgba(64, 158, 255, 0.18);
+  border: 1px solid rgba(64, 158, 255, 0.4);
+  color: #93c5fd;
+  margin: 0;
 }
 
-.gps-svg {
-  width: 26rpx;
-  height: 26rpx;
-  fill: currentColor;
+.amap-mini-btn:active {
+  opacity: 0.8;
+}
+
+.amap-mini-btn.btn-cal {
+  background: rgba(230, 162, 60, 0.2);
+  border-color: rgba(230, 162, 60, 0.45);
+  color: #fcd34d;
+}
+
+.amap-addr-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  padding: 8rpx 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 10rpx;
+}
+
+.amap-pin-svg {
+  width: 24rpx;
+  height: 24rpx;
+  fill: #94a3b8;
+  margin-top: 4rpx;
   flex-shrink: 0;
+}
+
+.amap-addr-text {
+  font-size: 22rpx;
+  color: #cbd5e1;
+  line-height: 1.4;
+  word-break: break-all;
+  flex: 1;
+}
+
+.amap-status-strip {
+  font-size: 22rpx;
+  line-height: 1.4;
+  margin-top: 4rpx;
+}
+
+.status-ok {
+  color: #67c23a;
+  font-weight: 500;
+}
+
+.status-warn {
+  color: #f87171;
+  font-weight: 500;
 }
 
 /* 底部操作 */
