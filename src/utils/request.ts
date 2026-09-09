@@ -1,11 +1,29 @@
 // 跨端通用请求封装 (微信小程序 / H5 / App)
 const BASE_URL = 'http://localhost:8080/api' // 本地开发后端接口地址
 
-interface RequestOptions {
+export interface ApiError extends Error {
+  code?: number
+  httpStatus?: number
+}
+
+export class ApiErrorImpl extends Error implements ApiError {
+  code?: number
+  httpStatus?: number
+
+  constructor(message: string, code?: number, httpStatus?: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.httpStatus = httpStatus
+  }
+}
+
+export interface RequestOptions {
   url: string
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   data?: any
   header?: any
+  showToast?: boolean // 默认 false，由调用页面 catch 自行统一展示 Toast，避免双重弹窗
 }
 
 export const request = <T = any>(options: RequestOptions): Promise<T> => {
@@ -26,26 +44,47 @@ export const request = <T = any>(options: RequestOptions): Promise<T> => {
       header: header,
       timeout: 10000,
       success: (res: any) => {
+        // 1. HTTP 状态码 200，检查后端业务包装状态码
         if (res.statusCode === 200) {
           const body = res.data
-          if (body.code === 200) {
+          if (body && body.code === 200) {
             resolve(body.data)
-          } else if (body.code === 401) {
-            uni.showToast({ title: '请先登录', icon: 'none' })
-            uni.removeStorageSync('student_token')
-            reject(new Error(body.message || 'Unauthorized'))
-          } else {
-            uni.showToast({ title: body.message || '请求失败', icon: 'none' })
-            reject(new Error(body.message || 'Error'))
+            return
           }
-        } else {
-          uni.showToast({ title: `网络异常: ${res.statusCode}`, icon: 'none' })
-          reject(new Error(`HTTP ${res.statusCode}`))
+
+          // 业务 code != 200，必须 reject，保留后端原始信息
+          const errorMsg = body?.message || '请求失败'
+          const errorCode = body?.code !== undefined ? body.code : -1
+
+          if (errorCode === 401) {
+            uni.removeStorageSync('student_token')
+          }
+
+          const apiError = new ApiErrorImpl(errorMsg, errorCode, 200)
+          if (options.showToast) {
+            uni.showToast({ title: errorMsg, icon: 'none' })
+          }
+          reject(apiError)
+          return
         }
+
+        // 2. HTTP 状态码非 200 (如 404 / 500 / 502)
+        const errorMsg = res.data?.message || `网络异常: ${res.statusCode}`
+        const errorCode = res.data?.code !== undefined ? res.data.code : res.statusCode
+        const apiError = new ApiErrorImpl(errorMsg, errorCode, res.statusCode)
+
+        if (options.showToast) {
+          uni.showToast({ title: errorMsg, icon: 'none' })
+        }
+        reject(apiError)
       },
-      fail: (err) => {
-        uni.showToast({ title: '网络连接超时', icon: 'none' })
-        reject(err)
+      fail: (err: any) => {
+        const errorMsg = err?.errMsg || '网络连接异常，请稍后重试'
+        const apiError = new ApiErrorImpl(errorMsg, -1, 0)
+        if (options.showToast) {
+          uni.showToast({ title: errorMsg, icon: 'none' })
+        }
+        reject(apiError)
       }
     })
   })
