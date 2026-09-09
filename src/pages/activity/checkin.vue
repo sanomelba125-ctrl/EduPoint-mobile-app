@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import {
   getActivityDetailApi,
   checkinActivityApi,
-  getActivityQrCodeApi,
-  calculateDistance,
   type ActivityItem,
   type CheckinResult
 } from '@/api/activity'
@@ -14,7 +12,6 @@ import { getApiErrorMessage } from '@/utils/request'
 import {
   getCurrentAMapLocation,
   getAMapDistance,
-  getAMapAddress
 } from '@/utils/amap'
 
 const userStore = useUserStore()
@@ -107,8 +104,12 @@ const toggleFlashlight = () => {
   })
 }
 
-const doCheckin = async (qrNonce: string, qrSign: string) => {
+const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.value) => {
   if (checkingIn.value) return
+  if (!Number.isInteger(qrActivityId) || qrActivityId <= 0) {
+    uni.showToast({ title: '活动信息无效，请从活动详情页进入签到', icon: 'none' })
+    return
+  }
 
   // 高德定位范围核验
   if (activity.value?.locationCheckEnabled && !isWithinRadius.value) {
@@ -134,7 +135,7 @@ const doCheckin = async (qrNonce: string, qrSign: string) => {
 
   try {
     const res = await checkinActivityApi({
-      activityId: actId.value,
+      activityId: qrActivityId,
       nonce: qrNonce,
       sign: qrSign,
       checkinLatitude: currentLat.value,
@@ -182,47 +183,48 @@ const handleRealScan = () => {
 
 const parseAndCheckin = (qrText: string) => {
   try {
-    let nonce = 'NONCE_' + Math.random().toString(36).substring(2, 10)
-    let sign = 'SIGN_' + Math.random().toString(36).substring(2, 14)
+    let nonce = ''
+    let sign = ''
+    let qrActivityId = actId.value
 
     if (qrText.includes('nonce=') && qrText.includes('sign=')) {
       const urlObj = new URL(qrText, 'http://localhost')
-      nonce = urlObj.searchParams.get('nonce') || nonce
-      sign = urlObj.searchParams.get('sign') || sign
-      const aid = urlObj.searchParams.get('actId')
-      if (aid) actId.value = Number(aid)
+      nonce = urlObj.searchParams.get('nonce') || ''
+      sign = urlObj.searchParams.get('sign') || ''
+      const aid = Number(urlObj.searchParams.get('actId'))
+      if (Number.isInteger(aid) && aid > 0) qrActivityId = aid
     } else if (qrText.startsWith('{') && qrText.endsWith('}')) {
       const parsed = JSON.parse(qrText)
-      if (parsed.nonce) nonce = parsed.nonce
-      if (parsed.sign) sign = parsed.sign
-      if (parsed.activityId) actId.value = Number(parsed.activityId)
+      nonce = typeof parsed.nonce === 'string' ? parsed.nonce : ''
+      sign = typeof parsed.sign === 'string' ? parsed.sign : ''
+      const aid = Number(parsed.activityId)
+      if (Number.isInteger(aid) && aid > 0) qrActivityId = aid
     }
 
-    doCheckin(nonce, sign)
+    if (!nonce || !sign || !Number.isInteger(qrActivityId) || qrActivityId <= 0) {
+      throw new Error('二维码缺少活动、nonce 或签名信息')
+    }
+    if (qrActivityId !== actId.value) {
+      uni.showToast({ title: '二维码不属于当前活动，请重新扫码', icon: 'none' })
+      return
+    }
+    doCheckin(nonce, sign, qrActivityId)
   } catch {
-    doCheckin('NONCE_DYNAMIC_TEST', 'SIGN_DYNAMIC_TEST')
+    uni.showToast({ title: '二维码格式无效，请重新扫码', icon: 'none' })
   }
 }
 
-const triggerSimulateScan = async () => {
-  let nonce = 'NONCE_' + Math.random().toString(36).substring(2, 10).toUpperCase()
-  let sign = 'SIGN_' + Math.random().toString(36).substring(2, 14).toUpperCase()
-
-  // 尝试获取服务端生成的有效签到二维码防伪码
-  try {
-    const qrRes = await getActivityQrCodeApi(actId.value)
-    if (qrRes && qrRes.nonce && qrRes.sign) {
-      nonce = qrRes.nonce
-      sign = qrRes.sign
-    }
-  } catch {
-    // 忽略
-  }
-
+const triggerSimulateScan = () => {
+  // H5 仅模拟“扫码动作”，明确携带当前活动 ID；nonce/sign 仍交给后端做真实防伪校验。
+  const simulatedQrPayload = JSON.stringify({
+    activityId: actId.value,
+    nonce: 'NONCE_DYNAMIC_TEST',
+    sign: 'SIGN_DYNAMIC_TEST'
+  })
   // 弹出二维码识别成功提示
   uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
   setTimeout(() => {
-    doCheckin(nonce, sign)
+    parseAndCheckin(simulatedQrPayload)
   }, 400)
 }
 
@@ -247,13 +249,13 @@ const goToCertificates = () => {
 }
 
 onLoad((query: any) => {
-  if (query && query.actId) {
-    actId.value = Number(query.actId)
+  const parsedId = Number(query?.actId)
+  if (Number.isInteger(parsedId) && parsedId > 0) {
+    actId.value = parsedId
+  } else if (query?.actId !== undefined) {
+    uni.showToast({ title: '活动参数无效', icon: 'none' })
+    return
   }
-  loadActivity()
-})
-
-onMounted(() => {
   loadActivity()
 })
 </script>

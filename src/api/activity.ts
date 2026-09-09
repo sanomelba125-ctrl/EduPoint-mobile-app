@@ -236,8 +236,8 @@ export async function signupActivityApi(activityId: number): Promise<SignupResul
  * 3.2 学生取消报名 (POST /student/activity/cancel-signup)
  * 后端业务失败时直接抛出异常，不允许本地静默修改为已取消
  */
-export async function cancelSignupActivityApi(activityId: number): Promise<void> {
-  await request<void>({
+export async function cancelSignupActivityApi(activityId: number): Promise<string> {
+  return await request<string>({
     url: '/student/activity/cancel-signup',
     method: 'POST',
     data: { activityId }
