@@ -100,29 +100,6 @@ export interface MyActivityQuery {
 }
 
 /**
- * 候补队列记录条目（对应 activity_waitlist 表 JOIN activity）
- */
-export interface MyWaitlistItem {
-  id: number             // activity_waitlist.id
-  activityId: number
-  studentId: number
-  queueNumber: number    // 候补序号
-  status: number         // 1=候补中 2=已转正 3=已取消
-  waitTime?: string
-  // 关联活动摘要字段（后端 JOIN 得到）
-  title: string
-  category: string
-  categoryName?: string
-  coverImage?: string
-  points: number
-  startTime: string
-  endTime: string
-  locationName: string
-  certificateEnabled: number
-  certificateTitle?: string
-}
-
-/**
  * 2.1 分页查询活动列表 (GET /activity/page)
  */
 export async function getActivityPageApi(query?: ActivityPageQuery): Promise<PageResult<ActivityItem>> {
@@ -335,20 +312,4 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
     Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return Math.round(R * c)
-}
-
-/**
- * 3.5 查询我的候补列表 (GET /student/activity/my-waitlist)
- * 注意：此接口需要后端实现。后端尚未提供前会返回 404，调用方需要 try/catch。
- * 返回 activity_waitlist.status=1（候补中）的记录，并 JOIN activity 表带活动摘要。
- */
-export async function getMyWaitlistApi(query?: {
-  page?: number
-  size?: number
-}): Promise<PageResult<MyWaitlistItem>> {
-  return await request<PageResult<MyWaitlistItem>>({
-    url: '/student/activity/my-waitlist',
-    method: 'GET',
-    data: { page: query?.page ?? 1, size: query?.size ?? 50 }
-  })
 }

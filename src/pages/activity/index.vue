@@ -276,20 +276,6 @@ onMounted(() => {
         <!-- 标题 -->
         <view class="act-card-title">{{ act.title }}</view>
 
-        <!-- 我的报名状态快速提示条（仅已报名/候补中时显示） -->
-        <view v-if="act.myEnrollmentStatus === 'WAITLIST'" class="my-status-strip my-status-strip-wait">
-          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M6,2V8H6V8L10,12L6,16V16H6V22H18V16H18V16L14,12L18,8V8H18V2H6M16,16.5V20H8V16.5L12,12.5L16,16.5M12,11.5L8,7.5V4H16V7.5L12,11.5Z"/></svg>
-          <text class="strip-text">候补中 · 排队等待递补通知</text>
-        </view>
-        <view v-else-if="act.myEnrollmentStatus === 'ENROLLED'" class="my-status-strip my-status-strip-enrolled">
-          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M10,17L16.59,10.41L15.17,9L10,14.17L7.83,12L6.41,13.41L10,17Z"/></svg>
-          <text class="strip-text">已正式报名</text>
-        </view>
-        <view v-else-if="act.myEnrollmentStatus === 'COMPLETED'" class="my-status-strip my-status-strip-done">
-          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"/></svg>
-          <text class="strip-text">已完成出勤 · 积分已入账</text>
-        </view>
-
         <!-- 时间与地点 (SVG 图标替代 Emoji) -->
         <view class="act-card-row">
           <svg class="icon-svg row-svg" viewBox="0 0 24 24">
@@ -637,47 +623,7 @@ onMounted(() => {
   font-weight: 700;
   color: #303133;
   line-height: 1.4;
-  margin-bottom: 10rpx;
-}
-
-/* 我的报名状态快速提示条 */
-.my-status-strip {
-  display: flex;
-  align-items: center;
-  gap: 8rpx;
-  padding: 8rpx 16rpx;
-  border-radius: 8rpx;
-  margin-bottom: 12rpx;
-}
-
-.strip-svg {
-  width: 26rpx;
-  height: 26rpx;
-  fill: currentColor;
-  flex-shrink: 0;
-}
-
-.strip-text {
-  font-size: 22rpx;
-  font-weight: 500;
-}
-
-.my-status-strip-wait {
-  background-color: #fdf6ec;
-  color: #e6a23c;
-  border: 1px solid #f5dab1;
-}
-
-.my-status-strip-enrolled {
-  background-color: #ecf5ff;
-  color: #409eff;
-  border: 1px solid #c6e2ff;
-}
-
-.my-status-strip-done {
-  background-color: #f0f9eb;
-  color: #67c23a;
-  border: 1px solid #c2e7b0;
+  margin-bottom: 14rpx;
 }
 
 .act-card-row {
