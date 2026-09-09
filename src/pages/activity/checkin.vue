@@ -17,7 +17,7 @@ const activity = ref<ActivityItem | null>(null)
 const flashActive = ref(false)
 const checkingIn = ref(false)
 
-// 当前学生实时 GPS 坐标 (若无法获取则模拟真实校园坐标)
+// 当前学生实时 GPS 坐标
 const currentLat = ref<number>(30.523910)
 const currentLon = ref<number>(114.364020)
 const distanceToCenter = ref<number>(28)
@@ -27,20 +27,17 @@ const isWithinRadius = ref(true)
 const showSuccessModal = ref(false)
 const checkinResult = ref<CheckinResult | null>(null)
 
-// 加载活动详情
 const loadActivity = async () => {
   try {
     const act = await getActivityDetailApi(actId.value)
     activity.value = act
     updateGpsDistance()
   } catch (err: any) {
-    uni.showToast({ title: err.message || '加载活动信息失败', icon: 'none' })
+    uni.showToast({ title: err?.message || '加载活动信息失败', icon: 'none' })
   }
 }
 
-// 获取定位并测距
 const updateGpsDistance = () => {
-  // 尝试调用 uni.getLocation
   // #ifndef H5
   uni.getLocation({
     type: 'gcj02',
@@ -50,7 +47,6 @@ const updateGpsDistance = () => {
       calcDist()
     },
     fail: () => {
-      // 降级使用校园默认坐标
       calcDist()
     }
   })
@@ -73,7 +69,6 @@ const calcDist = () => {
   isWithinRadius.value = !activity.value.locationCheckEnabled || dist <= activity.value.locationRadius
 }
 
-// 补光灯切换
 const toggleFlashlight = () => {
   flashActive.value = !flashActive.value
   uni.showToast({
@@ -82,10 +77,10 @@ const toggleFlashlight = () => {
   })
 }
 
-// 执行打卡核心逻辑
 const doCheckin = async (qrNonce: string, qrSign: string) => {
   if (checkingIn.value) return
   checkingIn.value = true
+  uni.showLoading({ title: '正在核验打卡...', mask: true })
 
   try {
     const res = await checkinActivityApi({
@@ -96,7 +91,7 @@ const doCheckin = async (qrNonce: string, qrSign: string) => {
       checkinLongitude: currentLon.value
     })
 
-    // 核心联动：即时更新 Pinia 用户全局可用积分
+    uni.hideLoading()
     if (res.pointsAwarded) {
       userStore.updatePoints(res.pointsAwarded)
     }
@@ -104,13 +99,13 @@ const doCheckin = async (qrNonce: string, qrSign: string) => {
     checkinResult.value = res
     showSuccessModal.value = true
   } catch (err: any) {
-    uni.showToast({ title: err.message || '打卡校验未通过', icon: 'none' })
+    uni.hideLoading()
+    uni.showToast({ title: err?.message || '打卡核验未通过', icon: 'none' })
   } finally {
     checkingIn.value = false
   }
 }
 
-// 调用真实扫码接口 (或降级测试)
 const handleRealScan = () => {
   // #ifndef H5
   uni.scanCode({
@@ -126,15 +121,12 @@ const handleRealScan = () => {
   // #endif
 
   // #ifdef H5
-  // H5 网页环境若无原生相机，调用模拟扫描
   triggerSimulateScan()
   // #endif
 }
 
-// 解析二维码内容
 const parseAndCheckin = (qrText: string) => {
   try {
-    // 支持直接包含 actId, nonce, sign 的 URL 或 JSON
     let nonce = 'NONCE_' + Math.random().toString(36).substring(2, 10)
     let sign = 'SIGN_' + Math.random().toString(36).substring(2, 14)
 
@@ -157,7 +149,6 @@ const parseAndCheckin = (qrText: string) => {
   }
 }
 
-// 模拟扫描现场大屏动态二维码
 const triggerSimulateScan = () => {
   const mockNonce = 'NONCE_' + Math.random().toString(36).substring(2, 10).toUpperCase()
   const mockSign = 'SIGN_' + Math.random().toString(36).substring(2, 14).toUpperCase()
@@ -175,7 +166,7 @@ const goToCertificates = () => {
   showSuccessModal.value = false
   uni.showModal({
     title: '荣誉电子证书',
-    content: `已成功为您颁发「${activity.value?.certificateTitle || '结业荣誉证书'}」！\n证书编号：CERT-${new Date().getFullYear()}-00${actId.value}，可在个人中心随时查看与核验。`,
+    content: `已成功为您颁发「${activity.value?.certificateTitle || '学术实训结业证书'}」！\n证书编号：CERT-2026-00${actId.value}，可在个人中心随时查看与核验导出。`,
     showCancel: false,
     confirmText: '我知道了',
     success: () => {
@@ -201,7 +192,9 @@ onMounted(() => {
     <!-- 顶部导航栏 -->
     <view class="checkin-header">
       <view class="checkin-back-btn" @click="goBackHall">
-        <text class="back-arrow">✕</text>
+        <svg class="header-svg" viewBox="0 0 24 24">
+          <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/>
+        </svg>
       </view>
       <text class="checkin-title">现场扫码考勤打卡</text>
       <view
@@ -209,11 +202,13 @@ onMounted(() => {
         :class="{ active: flashActive }"
         @click="toggleFlashlight"
       >
-        <text class="flash-icon">🔦</text>
+        <svg class="header-svg" viewBox="0 0 24 24">
+          <path d="M7,2H17A1,1 0 0,1 18,3V6C18,7.36 17.14,8.5 16,9.2V11H17A1,1 0 0,1 18,12V21A1,1 0 0,1 17,22H7A1,1 0 0,1 6,21V12A1,1 0 0,1 7,11H8V9.2C6.86,8.5 6,7.36 6,6V3A1,1 0 0,1 7,2M12,13A1.5,1.5 0 0,0 10.5,14.5A1.5,1.5 0 0,0 12,16A1.5,1.5 0 0,0 13.5,14.5A1.5,1.5 0 0,0 12,13M8,4V6H16V4H8Z"/>
+        </svg>
       </view>
     </view>
 
-    <!-- 活动信息小贴条 -->
+    <!-- 活动信息贴条 -->
     <view v-if="activity" class="act-focus-strip">
       <text class="focus-title">{{ activity.title }}</text>
       <text class="focus-pts">+{{ activity.points }} pts</text>
@@ -228,7 +223,9 @@ onMounted(() => {
         <view class="scan-corner corner-br" />
         <view class="scan-laser" />
         <view class="scan-watermark">
-          <text class="watermark-icon">📷</text>
+          <svg class="watermark-svg" viewBox="0 0 24 24">
+            <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
+          </svg>
         </view>
       </view>
 
@@ -239,9 +236,11 @@ onMounted(() => {
 
       <!-- GPS 定位状态条 -->
       <view class="gps-badge-card" :class="{ 'gps-warning': !isWithinRadius }">
-        <text class="gps-dot">📍</text>
+        <svg class="gps-svg" viewBox="0 0 24 24">
+          <path d="M12,2C15.31,2 18,4.69 18,8C18,12.5 12,22 12,22C12,22 6,12.5 6,8C6,4.69 8.69,2 12,2M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6Z"/>
+        </svg>
         <text v-if="isWithinRadius">
-          定位校验合格：距签到点 {{ distanceToCenter }} 米（允许范围 ≤ {{ activity?.locationRadius || 500 }}m）
+          定位校验合格：距中心点 {{ distanceToCenter }} 米（允许范围 ≤ {{ activity?.locationRadius || 500 }}m）
         </text>
         <text v-else>
           超出现场定位范围（当前距中心点 {{ distanceToCenter }} 米，允许 ≤ {{ activity?.locationRadius }}m）
@@ -252,8 +251,10 @@ onMounted(() => {
     <!-- 底部操作按钮 -->
     <view class="checkin-footer">
       <button class="btn-simulate-scan" :disabled="checkingIn" @click="handleRealScan">
-        <text class="scan-btn-icon">⚡</text>
-        <text>{{ checkingIn ? '正在校验防伪与考勤...' : '扫描 / 模拟现场动态二维码打卡' }}</text>
+        <svg class="scan-btn-svg" viewBox="0 0 24 24">
+          <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
+        </svg>
+        <text>{{ checkingIn ? '正在校验防伪与考勤...' : '模拟扫描现场动态二维码打卡' }}</text>
       </button>
     </view>
 
@@ -261,7 +262,9 @@ onMounted(() => {
     <view v-if="showSuccessModal" class="success-modal-mask">
       <view class="success-modal-content">
         <view class="success-icon-badge">
-          <text class="success-check">✓</text>
+          <svg class="check-svg" viewBox="0 0 24 24">
+            <path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+          </svg>
         </view>
         <view class="success-title">考勤签到成功</view>
         <view class="success-sub">
@@ -282,11 +285,13 @@ onMounted(() => {
 
         <!-- 电子证书发放提示 -->
         <view v-if="checkinResult?.certificateIssued || activity?.certificateEnabled" class="cert-grant-notice">
-          <text class="cert-icon">🎓</text>
+          <svg class="cert-svg" viewBox="0 0 24 24">
+            <path d="M13,21V19H17.8L13,14.2V9H18.2L13.4,4.2L14.8,2.8L21.6,9.6L14.8,16.4L16.2,17.8L18.4,15.6V21H13M11,21H3V3H11V5H5V19H11V21Z"/>
+          </svg>
           <view class="cert-text">
             <view class="cert-strong">电子荣誉证书已签发</view>
             <view class="cert-desc">
-              证书：{{ activity?.certificateTitle || '学术实训结业证书' }}，可在证书中心核验与查看。
+              证书：{{ activity?.certificateTitle || '学术实训结业证书' }}，可在证书中心核验与导出。
             </view>
           </view>
         </view>
@@ -300,7 +305,7 @@ onMounted(() => {
             查看我的电子证书
           </button>
           <button class="modal-btn btn-default" @click="goBackHall">
-            返回活动打卡大厅
+            返回活动大厅
           </button>
         </view>
       </view>
@@ -336,31 +341,33 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s;
+}
+
+.checkin-back-btn:active {
+  background-color: rgba(255, 255, 255, 0.25);
 }
 
 .checkin-tool-btn.active {
   background-color: #e6a23c;
 }
 
-.back-arrow {
-  font-size: 32rpx;
-  color: #ffffff;
-}
-
-.flash-icon {
-  font-size: 32rpx;
+.header-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: #ffffff;
 }
 
 .checkin-title {
   font-size: 30rpx;
   font-weight: 600;
-  letter-spacing: 1rpx;
+  letter-spacing: 0.5rpx;
 }
 
 .act-focus-strip {
   background-color: rgba(30, 58, 138, 0.6);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 12rpx 28rpx;
+  padding: 14rpx 28rpx;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -461,11 +468,13 @@ onMounted(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  opacity: 0.15;
+  opacity: 0.12;
 }
 
-.watermark-icon {
-  font-size: 160rpx;
+.watermark-svg {
+  width: 200rpx;
+  height: 200rpx;
+  fill: #ffffff;
 }
 
 .scan-guidelines {
@@ -490,7 +499,7 @@ onMounted(() => {
 .gps-badge-card {
   display: flex;
   align-items: center;
-  gap: 10rpx;
+  gap: 12rpx;
   background: rgba(103, 194, 58, 0.15);
   border: 1px solid rgba(103, 194, 58, 0.35);
   padding: 10rpx 24rpx;
@@ -507,8 +516,11 @@ onMounted(() => {
   color: #f56c6c;
 }
 
-.gps-dot {
-  font-size: 24rpx;
+.gps-svg {
+  width: 26rpx;
+  height: 26rpx;
+  fill: currentColor;
+  flex-shrink: 0;
 }
 
 /* 底部操作 */
@@ -521,7 +533,7 @@ onMounted(() => {
 .btn-simulate-scan {
   width: 100%;
   height: 84rpx;
-  border-radius: 12rpx;
+  border-radius: 8rpx;
   font-size: 28rpx;
   font-weight: 600;
   background-color: #409eff;
@@ -532,10 +544,18 @@ onMounted(() => {
   justify-content: center;
   gap: 12rpx;
   box-shadow: 0 4rpx 16rpx rgba(64, 158, 255, 0.4);
+  transition: all 0.15s ease;
 }
 
-.scan-btn-icon {
-  font-size: 32rpx;
+.btn-simulate-scan:active {
+  transform: scale(0.98);
+  background-color: #66b1ff;
+}
+
+.scan-btn-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: #ffffff;
 }
 
 /* 考勤成功弹窗 */
@@ -555,7 +575,7 @@ onMounted(() => {
 
 .success-modal-content {
   background-color: #ffffff;
-  border-radius: 20rpx;
+  border-radius: 16rpx;
   width: 100%;
   max-width: 600rpx;
   padding: 40rpx 32rpx 36rpx;
@@ -565,11 +585,11 @@ onMounted(() => {
 }
 
 .success-icon-badge {
-  width: 100rpx;
-  height: 100rpx;
+  width: 96rpx;
+  height: 96rpx;
   border-radius: 50%;
   background-color: #f0f9eb;
-  border: 4rpx solid #b3e19d;
+  border: 3rpx solid #b3e19d;
   color: #67c23a;
   display: inline-flex;
   align-items: center;
@@ -577,9 +597,10 @@ onMounted(() => {
   margin-bottom: 20rpx;
 }
 
-.success-check {
-  font-size: 52rpx;
-  font-weight: 700;
+.check-svg {
+  width: 52rpx;
+  height: 52rpx;
+  fill: #67c23a;
 }
 
 .success-title {
@@ -598,7 +619,7 @@ onMounted(() => {
 .points-grant-box {
   background-color: #fdf6ec;
   border: 1px solid #faecd8;
-  border-radius: 12rpx;
+  border-radius: 8rpx;
   padding: 20rpx;
   margin-bottom: 20rpx;
 }
@@ -634,7 +655,7 @@ onMounted(() => {
   align-items: flex-start;
   background-color: #f0f9eb;
   border: 1px solid #c2e7b0;
-  border-radius: 12rpx;
+  border-radius: 8rpx;
   padding: 16rpx 20rpx;
   font-size: 22rpx;
   color: #529b2e;
@@ -642,8 +663,12 @@ onMounted(() => {
   margin-bottom: 30rpx;
 }
 
-.cert-icon {
-  font-size: 32rpx;
+.cert-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: #67c23a;
+  flex-shrink: 0;
+  margin-top: 2rpx;
 }
 
 .cert-strong {
@@ -666,10 +691,15 @@ onMounted(() => {
 .modal-btn {
   height: 76rpx;
   line-height: 76rpx;
-  border-radius: 10rpx;
+  border-radius: 8rpx;
   font-size: 26rpx;
   font-weight: 600;
   border: none;
+  transition: all 0.15s ease;
+}
+
+.modal-btn:active {
+  transform: scale(0.98);
 }
 
 .modal-btn.btn-primary {
@@ -680,5 +710,6 @@ onMounted(() => {
 .modal-btn.btn-default {
   background-color: #f4f4f5;
   color: #606266;
+  border: 1px solid #dcdfe6;
 }
 </style>

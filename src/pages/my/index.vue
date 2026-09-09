@@ -213,14 +213,18 @@ const navTo = (url: string) => {
     <view class="grid-action-menu">
       <view class="grid-slot" @click="navTo('/pages/activity/records')">
         <view class="grid-icon-round icon-activity">
-          <text class="action-icon">🎯</text>
+          <svg class="grid-svg" viewBox="0 0 24 24">
+            <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+          </svg>
         </view>
         <text class="slot-text">我的活动</text>
       </view>
 
       <view class="grid-slot" @click="navTo('/pages/my/orders')">
         <view class="grid-icon-round icon-orders">
-          <text class="action-icon">🎁</text>
+          <svg class="grid-svg" viewBox="0 0 24 24">
+            <path d="M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M19,5V19H5V5H19M7,7V9H17V7H7M7,11V13H17V11H7M7,15V17H14V15H7Z"/>
+          </svg>
           <view v-if="pendingOrdersCount > 0" class="badge-dot">{{ pendingOrdersCount }}</view>
         </view>
         <text class="slot-text">兑换订单</text>
@@ -228,14 +232,18 @@ const navTo = (url: string) => {
 
       <view class="grid-slot" @click="navTo('/pages/my/points')">
         <view class="grid-icon-round icon-points">
-          <text class="action-icon">📊</text>
+          <svg class="grid-svg" viewBox="0 0 24 24">
+            <path d="M21,18V19A2,2 0 0,1 19,21H5C3.89,21 3,20.1 3,19V5A2,2 0 0,1 5,3H19A2,2 0 0,1 21,5V6H12C10.89,6 10,6.9 10,8V16C10,17.1 10.89,18 12,18H21M12,16H22V8H12V16M16,13.5A1.5,1.5 0 0,1 14.5,12A1.5,1.5 0 0,1 16,10.5A1.5,1.5 0 0,1 17.5,12A1.5,1.5 0 0,1 16,13.5Z"/>
+          </svg>
         </view>
         <text class="slot-text">学分流水</text>
       </view>
 
       <view class="grid-slot" @click="openEditModal">
         <view class="grid-icon-round icon-profile">
-          <text class="action-icon">👤</text>
+          <svg class="grid-svg" viewBox="0 0 24 24">
+            <path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/>
+          </svg>
         </view>
         <text class="slot-text">资料设置</text>
       </view>
@@ -245,7 +253,9 @@ const navTo = (url: string) => {
     <view class="cell-menu-list">
       <view class="cell-menu-item" @click="openEditModal">
         <view class="cell-left-part">
-          <text class="cell-icon">📱</text>
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21A2,2 0 0,0 7,23H17A2,2 0 0,0 19,21V3C19,1.89 18.1,1 17,1Z"/>
+          </svg>
           <text class="cell-title">学籍档案与联系电话</text>
         </view>
         <view class="cell-right-part">
@@ -256,7 +266,9 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/my/orders')">
         <view class="cell-left-part">
-          <text class="cell-icon">🎫</text>
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M22 10V6C22 4.89 21.1 4 20 4H4C2.9 4 2 4.89 2 6V10C3.11 10 4 10.9 4 12S3.11 14 2 14V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V14C20.9 14 20 13.1 20 12S20.9 10 22 10M20 8.54C18.81 9.23 18 10.53 18 12S18.81 14.77 20 15.46V18H4V15.46C5.19 14.77 6 13.47 6 12S5.19 9.23 4 8.54V6H20V8.54Z"/>
+          </svg>
           <text class="cell-title">现场提货核销凭证</text>
         </view>
         <view class="cell-right-part">
@@ -267,7 +279,9 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/rank/index')">
         <view class="cell-left-part">
-          <text class="cell-icon">🏆</text>
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M19 5H18V3H6V5H5C3.9 5 3 5.9 3 7V8C3 10.55 4.92 12.63 7.39 12.93C8.15 14.25 9.47 15.19 11 15.46V18H8V20H16V18H13V15.46C14.53 15.19 15.85 14.25 16.61 12.93C19.08 12.63 21 10.55 21 8V7C21 5.9 20.1 5 19 5M5 8V7H6V10.7C5.38 10.21 5 9.46 5 8M19 8C19 9.46 18.62 10.21 18 10.7V7H19V8Z"/>
+          </svg>
           <text class="cell-title">全校学分荣誉排行榜</text>
         </view>
         <view class="cell-right-part">
@@ -277,7 +291,9 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="showSecurityNotice">
         <view class="cell-left-part">
-          <text class="cell-icon">🛡️</text>
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M12,11.99H19C18.47,16.11 15.72,19.78 12,20.93V12H5V6.3L12,3.19V11.99Z"/>
+          </svg>
           <text class="cell-title">安全认证与令牌隔离</text>
         </view>
         <view class="cell-right-part">
@@ -591,6 +607,35 @@ const navTo = (url: string) => {
 
 .action-icon {
   font-size: 40rpx;
+}
+
+.grid-svg {
+  width: 44rpx;
+  height: 44rpx;
+}
+
+.icon-activity .grid-svg {
+  fill: #2563eb;
+}
+
+.icon-orders .grid-svg {
+  fill: #d97706;
+}
+
+.icon-points .grid-svg {
+  fill: #7e22ce;
+}
+
+.icon-profile .grid-svg {
+  fill: #059669;
+}
+
+.cell-svg {
+  width: 38rpx;
+  height: 38rpx;
+  fill: #64748b;
+  flex-shrink: 0;
+  margin-right: 12rpx;
 }
 
 .slot-text {
