@@ -162,7 +162,12 @@ const handleRealScan = () => {
     onlyFromCamera: true,
     scanType: ['qrCode'],
     success: (res) => {
-      parseAndCheckin(res.result)
+      // 触感震动反馈
+      try { uni.vibrateShort({}) } catch {}
+      uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
+      setTimeout(() => {
+        parseAndCheckin(res.result)
+      }, 400)
     },
     fail: () => {
       uni.showToast({ title: '已取消扫码', icon: 'none' })
@@ -214,7 +219,11 @@ const triggerSimulateScan = async () => {
     // 忽略
   }
 
-  doCheckin(nonce, sign)
+  // 弹出二维码识别成功提示
+  uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
+  setTimeout(() => {
+    doCheckin(nonce, sign)
+  }, 400)
 }
 
 const goBackHall = () => {
