@@ -185,7 +185,7 @@ const parseAndCheckin = (qrText: string) => {
   try {
     let nonce = ''
     let sign = ''
-    let qrActivityId = actId.value
+    let qrActivityId: number | null = null
 
     if (qrText.includes('nonce=') && qrText.includes('sign=')) {
       const urlObj = new URL(qrText, 'http://localhost')
@@ -201,8 +201,8 @@ const parseAndCheckin = (qrText: string) => {
       if (Number.isInteger(aid) && aid > 0) qrActivityId = aid
     }
 
-    if (!nonce || !sign || !Number.isInteger(qrActivityId) || qrActivityId <= 0) {
-      throw new Error('二维码缺少活动、nonce 或签名信息')
+    if (!nonce || !sign || qrActivityId === null) {
+      throw new Error('二维码缺少活动 ID、nonce 或签名信息')
     }
     if (qrActivityId !== actId.value) {
       uni.showToast({ title: '二维码不属于当前活动，请重新扫码', icon: 'none' })
