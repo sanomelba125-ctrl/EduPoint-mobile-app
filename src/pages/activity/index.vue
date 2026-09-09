@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
-import { getActivityPageApi, type ActivityItem } from '@/api/activity'
+import {
+  getActivityPageApi,
+  signupActivityApi,
+  cancelSignupActivityApi,
+  getActivityStatusInfo,
+  type ActivityItem,
+  type ActivityStatusInfo
+} from '@/api/activity'
 
 // 5 大活动分类
 const CATEGORIES = [
@@ -17,9 +24,6 @@ const currentCategory = ref('ALL')
 const searchKeyword = ref('')
 const loading = ref(false)
 const activityList = ref<ActivityItem[]>([])
-
-// 页面视图切换：活动大厅 vs 我的参与
-const activeHallTab = ref<'HALL' | 'MY'>('HALL')
 
 const fetchActivities = async () => {
   loading.value = true
@@ -66,22 +70,8 @@ const getPercent = (enrolled: number, limit: number) => {
 }
 
 const getStatusBadge = (act: ActivityItem) => {
-  if (act.myEnrollmentStatus === 'ENROLLED') {
-    return { text: '已报名', type: 'primary' }
-  }
-  if (act.myEnrollmentStatus === 'WAITLIST') {
-    return { text: `候补中第${act.myQueueNumber || 1}位`, type: 'warning' }
-  }
-  if (act.myEnrollmentStatus === 'COMPLETED') {
-    return { text: '已打卡', type: 'success' }
-  }
-  if (act.enrolledCount >= act.registrationLimit) {
-    if (act.waitlistEnabled) {
-      return { text: '可候补', type: 'warning' }
-    }
-    return { text: '已满额', type: 'info' }
-  }
-  return { text: '报名中', type: 'success' }
+  const info = getActivityStatusInfo(act)
+  return { text: info.statusLabel, type: info.statusType }
 }
 
 const goToDetail = (id: number) => {
@@ -90,9 +80,9 @@ const goToDetail = (id: number) => {
   })
 }
 
-const goToCheckin = () => {
+const goToCheckin = (actId?: number) => {
   uni.navigateTo({
-    url: '/pages/activity/checkin'
+    url: actId ? `/pages/activity/checkin?actId=${actId}` : '/pages/activity/checkin'
   })
 }
 
@@ -100,6 +90,81 @@ const goToMyRecords = () => {
   uni.navigateTo({
     url: '/pages/activity/records'
   })
+}
+
+// 主页直接取消报名/退出候补
+const handleCancelSignup = (act: ActivityItem) => {
+  const isWait = act.myEnrollmentStatus === 'WAITLIST'
+  uni.showModal({
+    title: isWait ? '确认退出候补' : '确认取消报名',
+    content: isWait
+      ? `确定退出「${act.title}」的候补排队吗？`
+      : `确定取消「${act.title}」的正式报名吗？取消后名额将自动让渡给排队候补的同学。`,
+    confirmText: isWait ? '退出候补' : '确认取消',
+    confirmColor: '#f56c6c',
+    cancelText: '保留名额',
+    success: async (res) => {
+      if (!res.confirm) return
+      uni.showLoading({ title: '正在取消...', mask: true })
+      try {
+        await cancelSignupActivityApi(act.id)
+        uni.hideLoading()
+        uni.showToast({ title: isWait ? '已退出候补' : '已取消报名', icon: 'success' })
+        fetchActivities()
+      } catch (err: any) {
+        uni.hideLoading()
+        uni.showToast({ title: err?.message || '取消失败', icon: 'none' })
+      }
+    }
+  })
+}
+
+// 主页直接报名/申请候补
+const handleQuickSignup = (act: ActivityItem) => {
+  const isFull = act.enrolledCount >= act.registrationLimit
+  if (isFull && !act.waitlistEnabled) {
+    uni.showToast({ title: '名额已满额，未开放候补', icon: 'none' })
+    return
+  }
+
+  uni.showModal({
+    title: isFull ? '申请候补确认' : '确认报名活动',
+    content: isFull
+      ? `正选名额已满，确认进入候补队列吗？\n当前排队序号预估为第 ${(act.waitlistCount || 0) + 1} 位。`
+      : `确认报名「${act.title}」吗？\n出勤完成后可获得 +${act.points} 积分奖励。`,
+    confirmText: isFull ? '确认候补' : '立即报名',
+    cancelText: '取消',
+    success: async (res) => {
+      if (!res.confirm) return
+      uni.showLoading({ title: '正在提交...', mask: true })
+      try {
+        const signRes = await signupActivityApi(act.id)
+        uni.hideLoading()
+        uni.showToast({ title: signRes?.message || (isFull ? '候补申请成功' : '报名成功'), icon: 'success' })
+        fetchActivities()
+      } catch (err: any) {
+        uni.hideLoading()
+        uni.showToast({ title: err?.message || (isFull ? '候补申请失败' : '报名失败'), icon: 'none' })
+      }
+    }
+  })
+}
+
+// 卡片按钮操作调度（根据活动状态执行相应功能）
+const handleCardAction = (act: ActivityItem, info: ActivityStatusInfo) => {
+  if (info.disabled) return
+  if (info.actionType === 'CHECKIN') {
+    goToCheckin(act.id)
+    return
+  }
+  if (info.actionType === 'WAIT_START') {
+    uni.showToast({ title: '活动尚未开展，请于活动进行期间前往现场打卡', icon: 'none' })
+    return
+  }
+  if (info.actionType === 'SIGNUP' || info.actionType === 'WAITLIST') {
+    handleQuickSignup(act)
+    return
+  }
 }
 
 onPullDownRefresh(() => {
@@ -120,7 +185,9 @@ onMounted(() => {
     <!-- 顶部综合操作区：搜索 + 扫码打卡入口 -->
     <view class="search-top-bar">
       <view class="search-input-box">
-        <text class="search-icon">🔍</text>
+        <svg class="icon-svg search-icon" viewBox="0 0 24 24">
+          <path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+        </svg>
         <input
           class="search-input"
           type="text"
@@ -128,12 +195,18 @@ onMounted(() => {
           placeholder="搜索学术讲座、志愿公益、体育竞赛..."
           @input="handleSearchInput"
         />
-        <text v-if="searchKeyword" class="clear-btn" @click="handleClearSearch">✕</text>
+        <view v-if="searchKeyword" class="clear-btn" @click="handleClearSearch">
+          <svg class="icon-svg" viewBox="0 0 24 24">
+            <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>
+          </svg>
+        </view>
       </view>
 
       <view class="checkin-quick-btn" @click="goToCheckin">
-        <text class="qr-icon">📷</text>
-        <text class="qr-text">打卡</text>
+        <svg class="icon-svg checkin-svg" viewBox="0 0 24 24">
+          <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
+        </svg>
+        <text class="qr-text">现场打卡</text>
       </view>
     </view>
 
@@ -154,14 +227,16 @@ onMounted(() => {
 
     <!-- 大厅功能快速联动条：我的参与记录快捷入口 -->
     <view class="quick-entry-row">
-      <view class="entry-sub-title">校园活动综合看板</view>
+      <view class="entry-sub-title">校园活动全景广场</view>
       <view class="entry-link" @click="goToMyRecords">
         <text class="link-text">我的活动记录</text>
-        <text class="link-arrow">></text>
+        <svg class="icon-svg arrow-svg" viewBox="0 0 24 24">
+          <path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/>
+        </svg>
       </view>
     </view>
 
-    <!-- 焦点推荐活动 Banner -->
+    <!-- 焦点推荐活动 Banner (高校旗舰深蓝) -->
     <view
       v-if="featuredActivity && !searchKeyword && currentCategory === 'ALL'"
       class="featured-banner"
@@ -169,7 +244,7 @@ onMounted(() => {
     >
       <view class="banner-top">
         <text class="banner-badge">
-          {{ featuredActivity.certificateEnabled ? '重点讲座 · 颁发结业证书' : '热门活动推荐' }}
+          {{ featuredActivity.certificateEnabled ? '重点学术讲座 · 颁发结业证书' : '热门重点推荐' }}
         </text>
         <text class="banner-points">+{{ featuredActivity.points }} pts</text>
       </view>
@@ -191,7 +266,7 @@ onMounted(() => {
         <view class="act-top-meta">
           <view class="tags-left">
             <text class="tag-badge tag-primary">{{ act.categoryName || '校园活动' }}</text>
-            <text v-if="act.certificateEnabled" class="tag-badge tag-warning">颁发证书</text>
+            <text v-if="act.certificateEnabled" class="tag-badge tag-cert">颁发证书</text>
           </view>
           <text class="status-badge" :class="`status-${getStatusBadge(act).type}`">
             {{ getStatusBadge(act).text }}
@@ -201,17 +276,35 @@ onMounted(() => {
         <!-- 标题 -->
         <view class="act-card-title">{{ act.title }}</view>
 
-        <!-- 时间与地点 -->
+        <!-- 我的报名状态快速提示条（仅已报名/候补中时显示） -->
+        <view v-if="act.myEnrollmentStatus === 'WAITLIST'" class="my-status-strip my-status-strip-wait">
+          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M6,2V8H6V8L10,12L6,16V16H6V22H18V16H18V16L14,12L18,8V8H18V2H6M16,16.5V20H8V16.5L12,12.5L16,16.5M12,11.5L8,7.5V4H16V7.5L12,11.5Z"/></svg>
+          <text class="strip-text">候补中 · 排队等待递补通知</text>
+        </view>
+        <view v-else-if="act.myEnrollmentStatus === 'ENROLLED'" class="my-status-strip my-status-strip-enrolled">
+          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M10,17L16.59,10.41L15.17,9L10,14.17L7.83,12L6.41,13.41L10,17Z"/></svg>
+          <text class="strip-text">已正式报名</text>
+        </view>
+        <view v-else-if="act.myEnrollmentStatus === 'COMPLETED'" class="my-status-strip my-status-strip-done">
+          <svg class="strip-svg" viewBox="0 0 24 24"><path d="M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"/></svg>
+          <text class="strip-text">已完成出勤 · 积分已入账</text>
+        </view>
+
+        <!-- 时间与地点 (SVG 图标替代 Emoji) -->
         <view class="act-card-row">
-          <text class="row-icon">🕒</text>
+          <svg class="icon-svg row-svg" viewBox="0 0 24 24">
+            <path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/>
+          </svg>
           <text class="row-text">{{ act.startTime.slice(5, 16) }} 至 {{ act.endTime.slice(11, 16) }}</text>
         </view>
         <view class="act-card-row">
-          <text class="row-icon">📍</text>
+          <svg class="icon-svg row-svg" viewBox="0 0 24 24">
+            <path d="M12,2C15.31,2 18,4.69 18,8C18,12.5 12,22 12,22C12,22 6,12.5 6,8C6,4.69 8.69,2 12,2M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6Z"/>
+          </svg>
           <text class="row-text">{{ act.locationName }}</text>
         </view>
 
-        <!-- 报名进度条 -->
+        <!-- 报名进度条 (直观展示当前报名人数/总人数及进度) -->
         <view class="act-progress-track">
           <view
             class="act-progress-fill"
@@ -220,21 +313,23 @@ onMounted(() => {
           />
         </view>
 
-        <!-- 底部说明与学分 -->
+        <!-- 底部说明与学分奖励 -->
         <view class="act-bottom-info">
-          <text class="enrolled-quota">
-            名额 {{ act.enrolledCount }} / {{ act.registrationLimit }} 人
-            <text v-if="act.waitlistCount && act.waitlistCount > 0" class="waitlist-hint">
-              ({{ act.waitlistCount }}人候补中)
+          <view class="enrolled-quota">
+            <text>名额 {{ act.enrolledCount }} / {{ act.registrationLimit }} 人</text>
+            <text v-if="act.enrolledCount >= act.registrationLimit && act.waitlistEnabled" class="waitlist-hint">
+              · 可候补{{ act.waitlistCount ? ` (${act.waitlistCount}人排队)` : '' }}
             </text>
-          </text>
+          </view>
           <text class="points-val">+{{ act.points }} pts</text>
         </view>
       </view>
 
       <!-- 空状态 -->
       <view v-if="!loading && activityList.length === 0" class="empty-box">
-        <text class="empty-icon">📂</text>
+        <svg class="empty-svg" viewBox="0 0 24 24">
+          <path d="M19,20H4C2.89,20 2,19.1 2,18V6C2,4.89 2.89,4 4,4H10L12,6H19A2,2 0 0,1 21,8H21L4,8V18L6.14,10H23.21L20.93,18.5C20.7,19.37 19.92,20 19,20Z"/>
+        </svg>
         <text class="empty-text">暂无符合条件的校园活动</text>
       </view>
     </view>
@@ -248,6 +343,14 @@ onMounted(() => {
   padding-bottom: 40rpx;
 }
 
+/* 基础通用矢量 SVG 规范 */
+.icon-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
 /* 顶部搜索与扫码打卡入口 */
 .search-top-bar {
   display: flex;
@@ -255,22 +358,30 @@ onMounted(() => {
   gap: 16rpx;
   padding: 16rpx 24rpx;
   background-color: #ffffff;
+  border-bottom: 1px solid #f0f2f5;
 }
 
 .search-input-box {
   flex: 1;
   display: flex;
   align-items: center;
-  background-color: #f0f2f5;
+  background-color: #f4f5f7;
   border-radius: 36rpx;
   padding: 0 20rpx;
   height: 72rpx;
+  transition: all 0.2s ease;
+}
+
+.search-input-box:focus-within {
+  background-color: #ffffff;
+  box-shadow: 0 0 0 1px #409eff;
 }
 
 .search-icon {
-  font-size: 28rpx;
+  width: 28rpx;
+  height: 28rpx;
   margin-right: 12rpx;
-  color: #909399;
+  fill: #909399;
 }
 
 .search-input {
@@ -280,31 +391,47 @@ onMounted(() => {
 }
 
 .clear-btn {
-  font-size: 26rpx;
-  color: #909399;
-  padding: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.clear-btn .icon-svg {
+  width: 24rpx;
+  height: 24rpx;
+  fill: #a8abb2;
 }
 
 .checkin-quick-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6rpx;
+  gap: 8rpx;
   background-color: #ecf5ff;
-  border: 1px solid #b3d8ff;
+  border: 1px solid #c6e2ff;
   color: #409eff;
   height: 72rpx;
   padding: 0 24rpx;
   border-radius: 36rpx;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.qr-icon {
-  font-size: 30rpx;
+.checkin-quick-btn:active {
+  transform: scale(0.97);
+  background-color: #d9ecff;
+}
+
+.checkin-svg {
+  width: 28rpx;
+  height: 28rpx;
+  fill: #409eff;
 }
 
 .qr-text {
-  font-size: 26rpx;
+  font-size: 25rpx;
   font-weight: 600;
 }
 
@@ -331,12 +458,15 @@ onMounted(() => {
   background-color: #f4f4f5;
   border: 1px solid #e9e9eb;
   flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
 .cat-pill.active {
   background-color: #409eff;
   color: #ffffff;
   border-color: #409eff;
+  font-weight: 600;
+  box-shadow: 0 2rpx 8rpx rgba(64, 158, 255, 0.35);
 }
 
 /* 快速入口条 */
@@ -344,13 +474,14 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16rpx 24rpx 8rpx;
+  padding: 20rpx 24rpx 10rpx;
 }
 
 .entry-sub-title {
   font-size: 24rpx;
-  font-weight: 600;
-  color: #909399;
+  font-weight: 700;
+  color: #606266;
+  letter-spacing: 0.5rpx;
 }
 
 .entry-link {
@@ -359,20 +490,28 @@ onMounted(() => {
   gap: 4rpx;
   font-size: 24rpx;
   color: #409eff;
+  font-weight: 500;
 }
 
-.link-arrow {
-  font-size: 24rpx;
+.arrow-svg {
+  width: 24rpx;
+  height: 24rpx;
+  fill: #409eff;
 }
 
-/* 焦点活动推荐 Banner (旗舰深蓝) */
+/* 焦点活动推荐 Banner (高校严谨深蓝) */
 .featured-banner {
   margin: 12rpx 24rpx;
   background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
   border-radius: 16rpx;
-  padding: 24rpx;
+  padding: 26rpx;
   color: #ffffff;
-  box-shadow: 0 4rpx 16rpx rgba(30, 58, 138, 0.25);
+  box-shadow: 0 4rpx 20rpx rgba(30, 58, 138, 0.28);
+  transition: transform 0.2s ease;
+}
+
+.featured-banner:active {
+  transform: scale(0.99);
 }
 
 .banner-top {
@@ -385,8 +524,10 @@ onMounted(() => {
 .banner-badge {
   background: rgba(255, 255, 255, 0.2);
   padding: 4rpx 14rpx;
-  border-radius: 8rpx;
+  border-radius: 6rpx;
   font-size: 22rpx;
+  font-weight: 500;
+  letter-spacing: 0.5rpx;
 }
 
 .banner-points {
@@ -396,14 +537,14 @@ onMounted(() => {
 }
 
 .banner-title {
-  font-size: 30rpx;
+  font-size: 32rpx;
   font-weight: 700;
   margin-bottom: 8rpx;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .banner-desc {
-  font-size: 22rpx;
+  font-size: 23rpx;
   color: #cbd5e1;
 }
 
@@ -421,6 +562,12 @@ onMounted(() => {
   border: 1px solid #ebeef5;
   padding: 24rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.act-item-card:active {
+  transform: scale(0.99);
+  box-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.05);
 }
 
 .act-top-meta {
@@ -437,18 +584,21 @@ onMounted(() => {
 
 .tag-badge {
   font-size: 22rpx;
-  padding: 4rpx 12rpx;
+  padding: 4rpx 14rpx;
   border-radius: 6rpx;
+  font-weight: 500;
 }
 
 .tag-primary {
   background-color: #ecf5ff;
   color: #409eff;
+  border: 1px solid #d9ecff;
 }
 
-.tag-warning {
+.tag-cert {
   background-color: #fdf6ec;
   color: #e6a23c;
+  border: 1px solid #faecd8;
 }
 
 .status-badge {
@@ -483,24 +633,66 @@ onMounted(() => {
 }
 
 .act-card-title {
-  font-size: 28rpx;
+  font-size: 29rpx;
   font-weight: 700;
   color: #303133;
   line-height: 1.4;
-  margin-bottom: 14rpx;
+  margin-bottom: 10rpx;
+}
+
+/* 我的报名状态快速提示条 */
+.my-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 8rpx;
+  margin-bottom: 12rpx;
+}
+
+.strip-svg {
+  width: 26rpx;
+  height: 26rpx;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.strip-text {
+  font-size: 22rpx;
+  font-weight: 500;
+}
+
+.my-status-strip-wait {
+  background-color: #fdf6ec;
+  color: #e6a23c;
+  border: 1px solid #f5dab1;
+}
+
+.my-status-strip-enrolled {
+  background-color: #ecf5ff;
+  color: #409eff;
+  border: 1px solid #c6e2ff;
+}
+
+.my-status-strip-done {
+  background-color: #f0f9eb;
+  color: #67c23a;
+  border: 1px solid #c2e7b0;
 }
 
 .act-card-row {
   display: flex;
   align-items: center;
-  gap: 10rpx;
+  gap: 12rpx;
   font-size: 24rpx;
   color: #606266;
   margin-bottom: 8rpx;
 }
 
-.row-icon {
-  font-size: 24rpx;
+.row-svg {
+  width: 26rpx;
+  height: 26rpx;
+  fill: #909399;
 }
 
 .row-text {
@@ -509,7 +701,7 @@ onMounted(() => {
 
 .act-progress-track {
   height: 8rpx;
-  background-color: #f2f3f5;
+  background-color: #f0f2f5;
   border-radius: 4rpx;
   overflow: hidden;
   margin: 18rpx 0 12rpx;
@@ -535,6 +727,7 @@ onMounted(() => {
 
 .enrolled-quota {
   color: #909399;
+  font-weight: 500;
 }
 
 .waitlist-hint {
@@ -550,15 +743,17 @@ onMounted(() => {
 
 /* 空状态 */
 .empty-box {
-  padding: 80rpx 0;
+  padding: 100rpx 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16rpx;
 }
 
-.empty-icon {
-  font-size: 64rpx;
+.empty-svg {
+  width: 72rpx;
+  height: 72rpx;
+  fill: #c0c4cc;
 }
 
 .empty-text {
