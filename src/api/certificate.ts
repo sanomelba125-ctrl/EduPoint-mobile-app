@@ -64,12 +64,18 @@ const mockMyCertificates: MyCertificateItem[] = [
  */
 export async function getMyCertificatesApi(): Promise<MyCertificateItem[]> {
   try {
-    const res: any = await request.get('/certificate/my-list')
-    if (res && res.code === 200 && Array.isArray(res.data)) {
-      return res.data
+    const res = await request<MyCertificateItem[]>({
+      url: '/certificate/my-list',
+      method: 'GET'
+    })
+    if (Array.isArray(res)) {
+      return res
+    }
+    if ((res as any)?.data && Array.isArray((res as any).data)) {
+      return (res as any).data
     }
   } catch (err) {
-    // 接口未实现或报错时平滑回退到前端内置数据
+    console.warn('[Mobile Certificate] My-list API failed, fallback to mock:', err)
   }
   return [...mockMyCertificates]
 }
@@ -79,12 +85,20 @@ export async function getMyCertificatesApi(): Promise<MyCertificateItem[]> {
  */
 export async function verifyCertificateApi(certificateNo: string): Promise<VerifyCertificateResult> {
   try {
-    const res: any = await request.get(`/certificate/verify/${certificateNo}`)
-    if (res && res.code === 200 && res.data) {
-      return res.data
+    const res = await request<any>({
+      url: `/certificate/verify/${certificateNo}`,
+      method: 'GET'
+    })
+    const data = res?.data || res
+    if (data && data.certificateNo) {
+      return {
+        ...data,
+        studentNameMasked: data.studentNameMasked || data.studentName,
+        verifyTime: data.verifyTime || new Date().toLocaleString()
+      }
     }
   } catch (err) {
-    // 回退本地核验逻辑
+    console.warn('[Mobile Certificate] Verify API failed, fallback to mock:', err)
   }
 
   const trimmed = (certificateNo || '').trim().toUpperCase()
