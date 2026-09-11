@@ -100,9 +100,79 @@ export interface AMapLocationResult {
 }
 
 /**
+ * 微信小程序需要先处理定位授权；H5 与 App 由 getLocation 触发系统授权。
+ */
+export async function ensureLocationAuthorization(): Promise<void> {
+  // #ifdef MP-WEIXIN
+  const setting = await new Promise<any>((resolve, reject) => {
+    uni.getSetting({
+      success: resolve,
+      fail: reject
+    })
+  })
+  const authorization = setting?.authSetting?.['scope.userLocation']
+
+  if (authorization === true) return
+
+  if (authorization === undefined) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        uni.authorize({
+          scope: 'scope.userLocation',
+          success: () => resolve(),
+          fail: reject
+        })
+      })
+      return
+    } catch {
+      // 首次拒绝后继续引导用户前往设置页。
+    }
+  }
+
+  const modal = await new Promise<any>((resolve) => {
+    uni.showModal({
+      title: '需要定位权限',
+      content: '地图导航、距离计算和现场打卡需要使用你的当前位置，请在设置中允许定位权限。',
+      confirmText: '去设置',
+      cancelText: '暂不授权',
+      success: resolve,
+      fail: () => resolve({ confirm: false })
+    })
+  })
+  if (!modal.confirm) {
+    throw new Error('未授权定位，暂时无法使用地图导航和现场打卡')
+  }
+
+  const openedSetting = await new Promise<any>((resolve, reject) => {
+    uni.openSetting({
+      success: resolve,
+      fail: reject
+    })
+  })
+  if (openedSetting?.authSetting?.['scope.userLocation'] !== true) {
+    throw new Error('定位权限仍未开启，请在小程序设置中允许使用位置信息')
+  }
+  // #endif
+}
+
+function getLocationError(error: any): Error {
+  const rawMessage = String(error?.errMsg || error?.message || '')
+  const lowerMessage = rawMessage.toLowerCase()
+  if (lowerMessage.includes('deny') || lowerMessage.includes('denied') || lowerMessage.includes('auth')) {
+    return new Error('定位权限未开启，请在浏览器或系统设置中允许访问位置信息')
+  }
+  if (lowerMessage.includes('secure') || lowerMessage.includes('https')) {
+    return new Error('浏览器定位需要 HTTPS 安全环境，请使用 HTTPS 或 localhost 访问')
+  }
+  return new Error(rawMessage || '无法获取设备定位，请检查定位权限和系统定位服务')
+}
+
+/**
  * 获取设备真实定位。定位失败时必须抛错，不能用活动打卡点冒充当前位置。
  */
-export function getCurrentAMapLocation(): Promise<AMapLocationResult> {
+export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
+  await ensureLocationAuthorization()
+
   return new Promise((resolve, reject) => {
     let settled = false
     const timeoutId = setTimeout(() => {
@@ -151,7 +221,7 @@ export function getCurrentAMapLocation(): Promise<AMapLocationResult> {
         })
       },
       fail: (error: any) => {
-        rejectOnce(new Error(error?.errMsg || '无法获取设备定位，请检查定位权限'))
+        rejectOnce(getLocationError(error))
       }
     } as any)
   })
