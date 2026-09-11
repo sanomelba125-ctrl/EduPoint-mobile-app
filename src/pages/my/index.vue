@@ -313,6 +313,18 @@ const navTo = (url: string) => {
         </view>
       </view>
 
+      <view class="cell-menu-item" @click="navTo('/pages/ai-chat/index')">
+        <view class="cell-left-part">
+          <svg class="cell-svg" viewBox="0 0 24 24" style="fill: #2563eb;">
+            <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6M12,12C9.33,12 4,13.34 4,16V18H20V16C20,13.34 14.67,12 12,12Z"/>
+          </svg>
+          <text class="cell-title">AI 智能客服小智</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-ai">在线问答 &gt;</text>
+        </view>
+      </view>
+
       <view class="cell-menu-item" @click="showSecurityNotice">
         <view class="cell-left-part">
           <svg class="cell-svg" viewBox="0 0 24 24">
@@ -726,6 +738,12 @@ const navTo = (url: string) => {
 .cell-sub-success {
   font-size: 24rpx;
   color: #10b981;
+}
+
+.cell-sub-ai {
+  font-size: 24rpx;
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .cell-arrow {

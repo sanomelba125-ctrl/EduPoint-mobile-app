@@ -93,6 +93,12 @@ const goToMyRecords = () => {
   })
 }
 
+const goToAiChat = () => {
+  uni.navigateTo({
+    url: '/pages/ai-chat/index'
+  })
+}
+
 // 主页直接取消报名/退出候补
 const handleCancelSignup = (act: ActivityItem) => {
   const isWait = act.myEnrollmentStatus === 'WAITLIST'
@@ -319,6 +325,13 @@ onMounted(() => {
         </svg>
         <text class="empty-text">暂无符合条件的校园活动</text>
       </view>
+    </view>
+
+    <!-- 全局悬浮 AI 智能客服入口 -->
+    <view class="floating-ai-btn" @click="goToAiChat">
+      <view class="ai-pulse-ring"></view>
+      <text class="ai-btn-icon">🤖</text>
+      <text class="ai-btn-label">AI客服</text>
     </view>
   </view>
 </template>
@@ -706,5 +719,59 @@ onMounted(() => {
 .empty-text {
   font-size: 26rpx;
   color: #909399;
+}
+
+/* 悬浮 AI 智能客服入口 */
+.floating-ai-btn {
+  position: fixed;
+  right: 32rpx;
+  bottom: 140rpx;
+  z-index: 99;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  box-shadow: 0 8rpx 28rpx rgba(37, 99, 235, 0.45);
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.floating-ai-btn:active {
+  transform: scale(0.92);
+}
+
+.ai-pulse-ring {
+  position: absolute;
+  top: -6rpx;
+  left: -6rpx;
+  right: -6rpx;
+  bottom: -6rpx;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 130, 246, 0.5);
+  animation: aiRingPulse 2.4s infinite ease-out;
+  pointer-events: none;
+}
+
+@keyframes aiRingPulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  70% { transform: scale(1.28); opacity: 0; }
+  100% { transform: scale(1.28); opacity: 0; }
+}
+
+.ai-btn-icon {
+  font-size: 38rpx;
+  line-height: 1;
+}
+
+.ai-btn-label {
+  font-size: 18rpx;
+  font-weight: 700;
+  color: #ffffff;
+  margin-top: 2rpx;
+  letter-spacing: 0.5rpx;
 }
 </style>

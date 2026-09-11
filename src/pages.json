@@ -86,6 +86,17 @@
         "navigationBarTitleText": "消息通知中心",
         "enablePullDownRefresh": true
       }
+    },
+    {
+      "path": "pages/ai-chat/index",
+      "style": {
+        "navigationBarTitleText": "AI 智能客服",
+        "navigationBarBackgroundColor": "#0f172a",
+        "navigationBarTextStyle": "white",
+        "app-plus": {
+          "softinputMode": "adjustResize"
+        }
+      }
     }
   ],
   "globalStyle": {
