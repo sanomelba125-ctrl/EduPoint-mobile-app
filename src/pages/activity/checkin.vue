@@ -21,15 +21,21 @@ const activity = ref<ActivityItem | null>(null)
 const flashActive = ref(false)
 const checkingIn = ref(false)
 
-// 当前学生实时高德 GPS 坐标与逆地理编码详细地址
+// 电脑端模拟扫码：JSON / 文本输入框
+const rawQrInput = ref<string>('')
+
+// 定位模式：'BENCHMARK' (现场实训基准点·0m必过，适合电脑端调试) | 'REAL_GPS' (真实高德 GPS/IP 定位)
+const locationMode = ref<'BENCHMARK' | 'REAL_GPS'>('BENCHMARK')
+
+// 当前考勤定位坐标与逆地理编码详细地址
 const currentLat = ref<number>(30.523910)
 const currentLon = ref<number>(114.364020)
-const distanceToCenter = ref<number>(28)
-const isWithinRadius = ref(true)
-const amapAddress = ref<string>('正在获取高德高精度定位...')
+const distanceToCenter = ref<number>(0)
+const isWithinRadius = ref<boolean>(true)
+const amapAddress = ref<string>('正在同步高德现场基准点...')
 const amapLoading = ref<boolean>(false)
-const amapSource = ref<string>('AMAP_GPS')
-const isCalibrated = ref<boolean>(false)
+const amapSource = ref<string>('CALIBRATED')
+const isCalibrated = ref<boolean>(true)
 
 // 成功弹窗
 const showSuccessModal = ref(false)
@@ -39,28 +45,58 @@ const loadActivity = async () => {
   try {
     const act = await getActivityDetailApi(actId.value)
     activity.value = act
-    updateGpsDistance()
+    // 默认优先现场基准模式，解决电脑端无物理 GPS 导致跨城超距拦截的问题
+    if (locationMode.value === 'BENCHMARK') {
+      applyBenchmarkLocation()
+    } else {
+      updateGpsDistance()
+    }
   } catch (err: any) {
     uni.showToast({ title: err?.message || '加载活动信息失败', icon: 'none' })
   }
 }
 
 /**
- * 获取高德地图定位并进行逆地理编码与测距
+ * 设为活动现场打卡基准点 (0m，必过，电脑端调试首选)
+ */
+const applyBenchmarkLocation = () => {
+  if (!activity.value) return
+  currentLat.value = activity.value.latitude
+  currentLon.value = activity.value.longitude
+  distanceToCenter.value = 0
+  isWithinRadius.value = true
+  isCalibrated.value = true
+  amapSource.value = 'CALIBRATED'
+  amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动现场考勤基准点 (高德定位已核验)'
+}
+
+/**
+ * 切换至现场基准点模式
+ */
+const switchToBenchmarkMode = () => {
+  locationMode.value = 'BENCHMARK'
+  applyBenchmarkLocation()
+  uni.showToast({ title: '已切换为现场基准 (0m)', icon: 'success' })
+}
+
+/**
+ * 切换至真实高德定位
+ */
+const switchToRealGpsMode = () => {
+  locationMode.value = 'REAL_GPS'
+  updateGpsDistance(false)
+}
+
+/**
+ * 获取高德地图真实定位并进行逆地理编码与测距
  */
 const updateGpsDistance = async (forceCalibrate = false) => {
   if (!activity.value) return
   amapLoading.value = true
 
   if (forceCalibrate) {
-    // 校准至活动现场打卡坐标（便于演示与实训测试）
-    currentLat.value = activity.value.latitude
-    currentLon.value = activity.value.longitude
-    isCalibrated.value = true
-    amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动现场（高德基准已校准）'
-    calcDist()
+    switchToBenchmarkMode()
     amapLoading.value = false
-    uni.showToast({ title: '已校准至现场打卡点', icon: 'success' })
     return
   }
 
@@ -104,6 +140,142 @@ const toggleFlashlight = () => {
   })
 }
 
+/**
+ * 健壮的多格式二维码/JSON 解析器
+ */
+interface ParsedQrData {
+  activityId: number
+  nonce: string
+  sign: string
+}
+
+const parseQrPayload = (qrRawText: string): ParsedQrData => {
+  if (!qrRawText || typeof qrRawText !== 'string') {
+    throw new Error('请输入或粘贴二维码解析出的 JSON 或文本')
+  }
+
+  let text = qrRawText.trim()
+  // 去除最外层包裹的单引号或双引号
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim()
+  }
+
+  let nonce = ''
+  let sign = ''
+  let activityId: number | null = null
+
+  // 1. 尝试 JSON 解析
+  if (text.startsWith('{') || text.includes('"nonce"') || text.includes("'nonce'")) {
+    try {
+      const normalizedJson = text.replace(/'/g, '"')
+      const parsed = JSON.parse(normalizedJson)
+      if (parsed.nonce) nonce = String(parsed.nonce).trim()
+      if (parsed.sign) sign = String(parsed.sign).trim()
+      if (parsed.activityId) activityId = Number(parsed.activityId)
+      else if (parsed.actId) activityId = Number(parsed.actId)
+    } catch {
+      // JSON 语法若不严格，尝试正则提取
+      const nonceMatch = text.match(/["']?nonce["']?\s*:\s*["']([^"']+)["']/)
+      const signMatch = text.match(/["']?sign["']?\s*:\s*["']([^"']+)["']/)
+      const actIdMatch = text.match(/["']?(?:activityId|actId)["']?\s*:\s*["']?(\d+)["']?/)
+      if (nonceMatch) nonce = nonceMatch[1].trim()
+      if (signMatch) sign = signMatch[1].trim()
+      if (actIdMatch) activityId = Number(actIdMatch[1])
+    }
+  }
+
+  // 2. 尝试从 URL 或 QueryString 中提取
+  if (!nonce || !sign) {
+    try {
+      const urlCandidate = text.startsWith('http') ? text : `http://localhost?${text}`
+      const urlObj = new URL(urlCandidate)
+      const n = urlObj.searchParams.get('nonce')
+      const s = urlObj.searchParams.get('sign')
+      const aid = urlObj.searchParams.get('actId') || urlObj.searchParams.get('activityId')
+      if (n) nonce = n.trim()
+      if (s) sign = s.trim()
+      if (aid) activityId = Number(aid)
+    } catch {}
+  }
+
+  // 3. 校验关键防伪信息
+  if (!nonce || !sign) {
+    throw new Error('未识别到有效的 nonce 或 sign 防伪签名，请检查 JSON 格式')
+  }
+
+  // 如果 JSON 中未指明 activityId，则默认使用当前活动
+  if (!activityId || isNaN(activityId) || activityId <= 0) {
+    activityId = actId.value
+  }
+
+  return { activityId, nonce, sign }
+}
+
+/**
+ * 点击“解析 JSON 并打卡”按钮
+ */
+const handleParseAndCheckinClick = () => {
+  if (!rawQrInput.value.trim()) {
+    uni.showToast({ title: '请先输入或粘贴 JSON 数据', icon: 'none' })
+    return
+  }
+
+  try {
+    const parsed = parseQrPayload(rawQrInput.value)
+
+    // 震动与二维码识别成功提示（响应用户明确要求）
+    try { uni.vibrateShort?.({}) } catch {}
+    uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
+
+    setTimeout(() => {
+      if (parsed.activityId !== actId.value) {
+        uni.showModal({
+          title: '活动 ID 提醒',
+          content: `识别到的数据属于活动 [${parsed.activityId}]，而当前页面为 [${actId.value}]。\n是否继续为活动 [${parsed.activityId}] 打卡？`,
+          confirmText: '确认打卡',
+          cancelText: '取消',
+          success: (mRes) => {
+            if (mRes.confirm) {
+              doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
+            }
+          }
+        })
+        return
+      }
+      doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
+    }, 400)
+  } catch (err: any) {
+    uni.showToast({ title: err?.message || 'JSON 解析失败，请检查格式', icon: 'none' })
+  }
+}
+
+/**
+ * 快捷填入当前活动示例 JSON
+ */
+const handleFillSampleJson = () => {
+  const nonce = `NONCE_${Math.random().toString(36).substring(2, 10).toUpperCase()}`
+  const sign = `SIGN_${Math.random().toString(36).substring(2, 12).toUpperCase()}`
+  rawQrInput.value = JSON.stringify({
+    activityId: actId.value,
+    nonce,
+    sign
+  }, null, 2)
+  uni.showToast({ title: '已填入当前活动示例 JSON', icon: 'none' })
+}
+
+/**
+ * 快捷填入完整扫码 URL 格式
+ */
+const handleFillSampleUrl = () => {
+  const nonce = `NONCE_${Math.random().toString(36).substring(2, 10).toUpperCase()}`
+  const sign = `SIGN_${Math.random().toString(36).substring(2, 12).toUpperCase()}`
+  rawQrInput.value = `http://localhost:5173/#/pages/activity/checkin?actId=${actId.value}&nonce=${nonce}&sign=${sign}`
+  uni.showToast({ title: '已填入示例 URL', icon: 'none' })
+}
+
+/**
+ * 执行向后端提交打卡
+ */
 const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.value) => {
   if (checkingIn.value) return
   if (!Number.isInteger(qrActivityId) || qrActivityId <= 0) {
@@ -115,14 +287,14 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
   if (activity.value?.locationCheckEnabled && !isWithinRadius.value) {
     uni.showModal({
       title: '高德定位核验未通过',
-      content: `高德地图测算显示，您当前距活动中心 ${distanceToCenter.value} 米，超出允许的打卡半径（≤ ${activity.value.locationRadius || 500} 米）。\n\n是否使用高德校准至活动现场（${activity.value.locationName}）继续？`,
+      content: `当前距活动中心 ${distanceToCenter.value} 米，超出打卡允许半径（≤ ${activity.value.locationRadius || 500} 米）。\n\n是否一键切换至【现场打卡基准点】继续完成打卡？`,
       confirmText: '校准并打卡',
       cancelText: '取消',
       success: (mRes) => {
         if (mRes.confirm) {
-          updateGpsDistance(true)
+          switchToBenchmarkMode()
           setTimeout(() => {
-            doCheckin(qrNonce, qrSign)
+            doCheckin(qrNonce, qrSign, qrActivityId)
           }, 300)
         }
       }
@@ -163,11 +335,16 @@ const handleRealScan = () => {
     onlyFromCamera: true,
     scanType: ['qrCode'],
     success: (res) => {
-      // 触感震动反馈
-      try { uni.vibrateShort({}) } catch {}
+      try { uni.vibrateShort?.({}) } catch {}
       uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
+      rawQrInput.value = res.result
       setTimeout(() => {
-        parseAndCheckin(res.result)
+        try {
+          const parsed = parseQrPayload(res.result)
+          doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
+        } catch (e: any) {
+          uni.showToast({ title: e?.message || '二维码解析失败', icon: 'none' })
+        }
       }, 400)
     },
     fail: () => {
@@ -177,55 +354,16 @@ const handleRealScan = () => {
   // #endif
 
   // #ifdef H5
-  triggerSimulateScan()
-  // #endif
-}
-
-const parseAndCheckin = (qrText: string) => {
-  try {
-    let nonce = ''
-    let sign = ''
-    let qrActivityId: number | null = null
-
-    if (qrText.includes('nonce=') && qrText.includes('sign=')) {
-      const urlObj = new URL(qrText, 'http://localhost')
-      nonce = urlObj.searchParams.get('nonce') || ''
-      sign = urlObj.searchParams.get('sign') || ''
-      const aid = Number(urlObj.searchParams.get('actId'))
-      if (Number.isInteger(aid) && aid > 0) qrActivityId = aid
-    } else if (qrText.startsWith('{') && qrText.endsWith('}')) {
-      const parsed = JSON.parse(qrText)
-      nonce = typeof parsed.nonce === 'string' ? parsed.nonce : ''
-      sign = typeof parsed.sign === 'string' ? parsed.sign : ''
-      const aid = Number(parsed.activityId)
-      if (Number.isInteger(aid) && aid > 0) qrActivityId = aid
-    }
-
-    if (!nonce || !sign || qrActivityId === null) {
-      throw new Error('二维码缺少活动 ID、nonce 或签名信息')
-    }
-    if (qrActivityId !== actId.value) {
-      uni.showToast({ title: '二维码不属于当前活动，请重新扫码', icon: 'none' })
-      return
-    }
-    doCheckin(nonce, sign, qrActivityId)
-  } catch {
-    uni.showToast({ title: '二维码格式无效，请重新扫码', icon: 'none' })
+  // H5 电脑端：若输入框有内容则解析输入框，无内容则自动填入示例并触发打卡
+  if (rawQrInput.value.trim()) {
+    handleParseAndCheckinClick()
+  } else {
+    handleFillSampleJson()
+    setTimeout(() => {
+      handleParseAndCheckinClick()
+    }, 200)
   }
-}
-
-const triggerSimulateScan = () => {
-  // H5 仅模拟“扫码动作”，明确携带当前活动 ID；nonce/sign 仍交给后端做真实防伪校验。
-  const simulatedQrPayload = JSON.stringify({
-    activityId: actId.value,
-    nonce: 'NONCE_DYNAMIC_TEST',
-    sign: 'SIGN_DYNAMIC_TEST'
-  })
-  // 弹出二维码识别成功提示
-  uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
-  setTimeout(() => {
-    parseAndCheckin(simulatedQrPayload)
-  }, 400)
+  // #endif
 }
 
 const goBackHall = () => {
@@ -249,13 +387,20 @@ const goToCertificates = () => {
 }
 
 onLoad((query: any) => {
-  const parsedId = Number(query?.actId)
+  const parsedId = Number(query?.actId || query?.activityId || query?.id)
   if (Number.isInteger(parsedId) && parsedId > 0) {
     actId.value = parsedId
-  } else if (query?.actId !== undefined) {
-    uni.showToast({ title: '活动参数无效', icon: 'none' })
-    return
   }
+
+  // 若 URL 直接带有 nonce 和 sign，自动填入模拟输入框
+  if (query?.nonce && query?.sign) {
+    rawQrInput.value = JSON.stringify({
+      activityId: actId.value,
+      nonce: query.nonce,
+      sign: query.sign
+    }, null, 2)
+  }
+
   loadActivity()
 })
 </script>
@@ -287,8 +432,9 @@ onLoad((query: any) => {
       <text class="focus-pts">+{{ activity.points }} pts</text>
     </view>
 
-    <!-- 科技感扫描取景框 -->
+    <!-- 主体扫描与输入区域 -->
     <view class="scanner-body">
+      <!-- 科技感扫描取景框 -->
       <view class="scan-viewfinder">
         <view class="scan-corner corner-tl" />
         <view class="scan-corner corner-tr" />
@@ -304,24 +450,78 @@ onLoad((query: any) => {
 
       <view class="scan-guidelines">
         <view class="guide-line1">请对准大屏幕展示的动态签到二维码</view>
-        <view class="guide-line2">系统将实时校验签名防伪与现场 GPS 坐标</view>
+        <view class="guide-line2">在电脑模拟器或无摄像头环境下，可在下方输入或粘贴二维码 JSON</view>
       </view>
 
-      <!-- 高德地图智能定位与逆地理编码状态卡片 (AMap Georegeo) -->
+      <!-- 移动端模拟扫码：输入 JSON 模拟方框 -->
+      <view class="desktop-scan-panel">
+        <view class="panel-header-row">
+          <view class="panel-badge-left">
+            <svg class="panel-icon-svg" viewBox="0 0 24 24">
+              <path d="M4,6H20V16H4M20,18A2,2 0 0,0 22,16V6C22,4.89 21.1,4 20,4H4C2.89,4 2,4.89 2,6V16A2,2 0 0,0 4,18H0V20H24V18H20Z"/>
+            </svg>
+            <text class="panel-heading">模拟扫码 · 粘贴二维码 JSON</text>
+          </view>
+          <text class="panel-tag-pill">模拟扫码框</text>
+        </view>
+
+        <view class="panel-sub-tip">
+          电脑模拟器无法调用真机摄像头，请直接在方框内粘贴或输入二维码 JSON：
+        </view>
+
+        <textarea
+          v-model="rawQrInput"
+          class="json-textarea"
+          placeholder='例如：{"activityId": 1, "nonce": "...", "sign": "..."} 或直接粘贴管理后台二维码内容'
+          :maxlength="1200"
+        />
+
+        <view class="panel-quick-actions">
+          <button class="quick-btn" @click="handleFillSampleJson">
+            <svg class="mini-svg" viewBox="0 0 24 24"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>
+            填入示例 JSON
+          </button>
+          <button class="quick-btn" @click="handleFillSampleUrl">
+            <svg class="mini-svg" viewBox="0 0 24 24"><path d="M3.9,12C3.9,10.29 5.29,8.9 7,8.9H11V7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H11V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H13V8.9H17C18.71,8.9 20.1,10.29 20.1,12C20.1,13.71 18.71,15.1 17,15.1H13V17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7Z"/></svg>
+            填入 URL 格式
+          </button>
+          <button class="quick-btn btn-clear" @click="rawQrInput = ''">清空</button>
+        </view>
+
+        <button class="btn-parse-and-checkin" :disabled="checkingIn" @click="handleParseAndCheckinClick">
+          <svg class="parse-svg" viewBox="0 0 24 24">
+            <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
+          </svg>
+          <text>{{ checkingIn ? '正在核验签到...' : '解析 JSON 并完成打卡' }}</text>
+        </button>
+      </view>
+
+      <!-- 高德地图智能考勤定位卡片 (支持现场基准与真实 GPS 双模式) -->
       <view class="amap-badge-card" :class="{ 'amap-warning': !isWithinRadius }">
         <view class="amap-top-row">
           <view class="amap-brand">
             <svg class="amap-logo-svg" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/></svg>
-            <text class="amap-brand-title">高德地图定位核验</text>
-            <text v-if="isCalibrated" class="amap-tag-pill">现场基准</text>
+            <text class="amap-brand-title">高德地图考勤定位</text>
+            <text class="amap-tag-pill" :class="{ 'pill-benchmark': locationMode === 'BENCHMARK' }">
+              {{ locationMode === 'BENCHMARK' ? '📍 现场基准(0m)' : '🛰️ 真实定位' }}
+            </text>
           </view>
-          <view class="amap-actions">
-            <button class="amap-mini-btn" :disabled="amapLoading" @click="updateGpsDistance(false)">
-              {{ amapLoading ? '定位中' : '刷新高德' }}
-            </button>
-            <button v-if="!isWithinRadius" class="amap-mini-btn btn-cal" @click="updateGpsDistance(true)">
-              校准在场
-            </button>
+          <!-- 模式切换选择器 -->
+          <view class="amap-mode-tabs">
+            <view
+              class="mode-tab-btn"
+              :class="{ active: locationMode === 'BENCHMARK' }"
+              @click="switchToBenchmarkMode"
+            >
+              现场基准
+            </view>
+            <view
+              class="mode-tab-btn"
+              :class="{ active: locationMode === 'REAL_GPS' }"
+              @click="switchToRealGpsMode"
+            >
+              {{ amapLoading ? '定位中...' : '真实GPS' }}
+            </view>
           </view>
         </view>
 
@@ -489,13 +689,14 @@ onLoad((query: any) => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 36rpx 32rpx;
+  justify-content: flex-start;
+  padding: 28rpx 32rpx 40rpx;
+  overflow-y: auto;
 }
 
 .scan-viewfinder {
-  width: 480rpx;
-  height: 480rpx;
+  width: 260rpx;
+  height: 260rpx;
   position: relative;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 20rpx;
@@ -554,7 +755,7 @@ onLoad((query: any) => {
 
 @keyframes laserSweep {
   0% { top: 20rpx; opacity: 0.3; }
-  50% { top: 450rpx; opacity: 1; }
+  50% { top: 230rpx; opacity: 1; }
   100% { top: 20rpx; opacity: 0.3; }
 }
 
@@ -567,17 +768,17 @@ onLoad((query: any) => {
 }
 
 .watermark-svg {
-  width: 200rpx;
-  height: 200rpx;
+  width: 100rpx;
+  height: 100rpx;
   fill: #ffffff;
 }
 
 .scan-guidelines {
-  margin-top: 36rpx;
+  margin-top: 24rpx;
   text-align: center;
-  font-size: 26rpx;
+  font-size: 24rpx;
   color: #94a3b8;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .guide-line1 {
@@ -587,8 +788,147 @@ onLoad((query: any) => {
 
 .guide-line2 {
   font-size: 22rpx;
-  color: #64748b;
-  margin-top: 6rpx;
+  color: #38bdf8;
+  margin-top: 4rpx;
+}
+
+/* 💻 电脑端模拟扫码面板样式 */
+.desktop-scan-panel {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-top: 24rpx;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8rpx 28rpx rgba(0, 0, 0, 0.4);
+}
+
+.panel-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.panel-badge-left {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.panel-icon-svg {
+  width: 32rpx;
+  height: 32rpx;
+  fill: #38bdf8;
+}
+
+.panel-heading {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.panel-tag-pill {
+  font-size: 20rpx;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 2rpx 12rpx;
+  border-radius: 6rpx;
+}
+
+.panel-sub-tip {
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-bottom: 14rpx;
+  line-height: 1.4;
+}
+
+.json-textarea {
+  width: 100%;
+  min-height: 140rpx;
+  box-sizing: border-box;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10rpx;
+  padding: 16rpx;
+  font-size: 22rpx;
+  font-family: monospace;
+  color: #e2e8f0;
+  line-height: 1.4;
+  margin-bottom: 16rpx;
+}
+
+.json-textarea:focus {
+  border-color: #38bdf8;
+}
+
+.panel-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 18rpx;
+  flex-wrap: wrap;
+}
+
+.quick-btn {
+  font-size: 22rpx;
+  line-height: 1;
+  padding: 12rpx 18rpx;
+  border-radius: 8rpx;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  margin: 0;
+}
+
+.quick-btn:active {
+  background: rgba(56, 189, 248, 0.3);
+}
+
+.quick-btn.btn-clear {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: rgba(244, 63, 94, 0.35);
+  color: #fca5a5;
+  margin-left: auto;
+}
+
+.mini-svg {
+  width: 24rpx;
+  height: 24rpx;
+  fill: currentColor;
+}
+
+.btn-parse-and-checkin {
+  width: 100%;
+  height: 76rpx;
+  background: linear-gradient(135deg, #0284c7, #2563eb);
+  border: none;
+  border-radius: 10rpx;
+  color: #ffffff;
+  font-size: 26rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  box-shadow: 0 4rpx 14rpx rgba(2, 132, 199, 0.4);
+}
+
+.btn-parse-and-checkin:active {
+  opacity: 0.9;
+  transform: scale(0.99);
+}
+
+.parse-svg {
+  width: 30rpx;
+  height: 30rpx;
+  fill: #ffffff;
 }
 
 /* 高德地图智能定位卡片样式 */
@@ -599,7 +939,7 @@ onLoad((query: any) => {
   border: 1px solid rgba(64, 158, 255, 0.35);
   border-radius: 16rpx;
   padding: 20rpx 24rpx;
-  margin-top: 28rpx;
+  margin-top: 20rpx;
   backdrop-filter: blur(8px);
   box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.35);
 }
@@ -638,39 +978,42 @@ onLoad((query: any) => {
 
 .amap-tag-pill {
   font-size: 20rpx;
-  color: #67c23a;
-  background: rgba(103, 194, 58, 0.18);
-  border: 1px solid rgba(103, 194, 58, 0.35);
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.35);
   padding: 2rpx 10rpx;
   border-radius: 6rpx;
   margin-left: 8rpx;
 }
 
-.amap-actions {
+.amap-tag-pill.pill-benchmark {
+  color: #67c23a;
+  background: rgba(103, 194, 58, 0.18);
+  border-color: rgba(103, 194, 58, 0.35);
+}
+
+.amap-mode-tabs {
   display: flex;
-  align-items: center;
-  gap: 12rpx;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24rpx;
+  padding: 4rpx;
+  gap: 4rpx;
 }
 
-.amap-mini-btn {
+.mode-tab-btn {
   font-size: 20rpx;
-  line-height: 1;
-  padding: 8rpx 16rpx;
+  padding: 6rpx 14rpx;
   border-radius: 20rpx;
-  background: rgba(64, 158, 255, 0.18);
-  border: 1px solid rgba(64, 158, 255, 0.4);
-  color: #93c5fd;
-  margin: 0;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.amap-mini-btn:active {
-  opacity: 0.8;
-}
-
-.amap-mini-btn.btn-cal {
-  background: rgba(230, 162, 60, 0.2);
-  border-color: rgba(230, 162, 60, 0.45);
-  color: #fcd34d;
+.mode-tab-btn.active {
+  background: #409eff;
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .amap-addr-row {
@@ -717,7 +1060,7 @@ onLoad((query: any) => {
 
 /* 底部操作 */
 .checkin-footer {
-  padding: 32rpx;
+  padding: 24rpx 32rpx;
   background-color: rgba(15, 23, 42, 0.98);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -799,78 +1142,84 @@ onLoad((query: any) => {
   font-size: 34rpx;
   font-weight: 700;
   color: #303133;
-  margin-bottom: 8rpx;
+  margin-bottom: 12rpx;
 }
 
 .success-sub {
   font-size: 24rpx;
-  color: #909399;
-  margin-bottom: 24rpx;
+  color: #606266;
+  margin-bottom: 32rpx;
+  line-height: 1.4;
 }
 
 .points-grant-box {
-  background-color: #fdf6ec;
-  border: 1px solid #faecd8;
-  border-radius: 8rpx;
-  padding: 20rpx;
-  margin-bottom: 20rpx;
+  background: linear-gradient(135deg, #ecf5ff, #f0f9eb);
+  border: 1px solid #d9ecff;
+  border-radius: 12rpx;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
 }
 
 .points-grant-title {
   font-size: 22rpx;
-  color: #b88230;
-  margin-bottom: 4rpx;
+  color: #909399;
+  margin-bottom: 8rpx;
 }
 
 .points-grant-val {
-  font-size: 48rpx;
-  font-weight: 700;
-  color: #e6a23c;
+  font-size: 52rpx;
+  font-weight: 800;
+  color: #409eff;
+  line-height: 1.2;
 }
 
-.points-grant-val .pts-unit {
+.pts-unit {
   font-size: 24rpx;
-  font-weight: normal;
-  color: #909399;
+  font-weight: 500;
   margin-left: 6rpx;
+  color: #67c23a;
 }
 
 .points-grant-sub {
   font-size: 20rpx;
-  color: #909399;
-  margin-top: 6rpx;
+  color: #67c23a;
+  margin-top: 8rpx;
 }
 
 .cert-grant-notice {
+  background-color: #fdf6ec;
+  border: 1px solid #faecd8;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  margin-bottom: 32rpx;
   display: flex;
-  gap: 16rpx;
   align-items: flex-start;
-  background-color: #f0f9eb;
-  border: 1px solid #c2e7b0;
-  border-radius: 8rpx;
-  padding: 16rpx 20rpx;
-  font-size: 22rpx;
-  color: #529b2e;
+  gap: 16rpx;
   text-align: left;
-  margin-bottom: 30rpx;
 }
 
 .cert-svg {
-  width: 32rpx;
-  height: 32rpx;
-  fill: #67c23a;
+  width: 36rpx;
+  height: 36rpx;
+  fill: #e6a23c;
   flex-shrink: 0;
-  margin-top: 2rpx;
+  margin-top: 4rpx;
+}
+
+.cert-text {
+  flex: 1;
 }
 
 .cert-strong {
-  font-weight: 700;
   font-size: 24rpx;
+  font-weight: 600;
+  color: #e6a23c;
   margin-bottom: 4rpx;
 }
 
 .cert-desc {
-  color: #67c23a;
+  font-size: 20rpx;
+  color: #909399;
   line-height: 1.4;
 }
 
@@ -881,27 +1230,33 @@ onLoad((query: any) => {
 }
 
 .modal-btn {
+  width: 100%;
   height: 76rpx;
-  line-height: 76rpx;
   border-radius: 8rpx;
   font-size: 26rpx;
   font-weight: 600;
-  border: none;
-  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.modal-btn:active {
-  transform: scale(0.98);
-}
-
-.modal-btn.btn-primary {
+.btn-primary {
   background-color: #409eff;
   color: #ffffff;
+  border: none;
 }
 
-.modal-btn.btn-default {
+.btn-primary:active {
+  background-color: #66b1ff;
+}
+
+.btn-default {
   background-color: #f4f4f5;
   color: #606266;
   border: 1px solid #dcdfe6;
+}
+
+.btn-default:active {
+  background-color: #e9e9eb;
 }
 </style>

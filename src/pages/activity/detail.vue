@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { onLoad, onShow, onHide, onUnload, onPullDownRefresh } from '@dcloudio/uni-app'
 import {
   getActivityDetailApi,
   signupActivityApi,
@@ -15,17 +15,45 @@ const activityId = ref<number>(1)
 const loading = ref(false)
 const submitting = ref(false)
 const activity = ref<ActivityItem | null>(null)
+let pollTimer: any = null
 
-const fetchDetail = async () => {
+/**
+ * 获取活动详情
+ * @param silent 是否静默刷新（并发轮询与下拉刷新时不阻断页面、不闪烁加载框）
+ */
+const fetchDetail = async (silent = false) => {
   if (!activityId.value) return
-  loading.value = true
+  if (!silent && !activity.value) {
+    loading.value = true
+  }
   try {
     const res = await getActivityDetailApi(activityId.value)
     activity.value = res
   } catch (err: any) {
-    uni.showToast({ title: err.message || '获取活动详情失败', icon: 'none' })
+    if (!silent) {
+      uni.showToast({ title: err.message || '获取活动详情失败', icon: 'none' })
+    }
   } finally {
-    loading.value = false
+    if (!silent) {
+      loading.value = false
+    }
+    uni.stopPullDownRefresh()
+  }
+}
+
+/** 启动高频平滑短轮询（2秒/次），保持并发高频场景下名额与排队数与主页完全一致 */
+const startPolling = () => {
+  stopPolling()
+  pollTimer = setInterval(() => {
+    fetchDetail(true)
+  }, 2000)
+}
+
+/** 停止轮询 */
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
   }
 }
 
@@ -95,7 +123,7 @@ const handleEnrollAction = async () => {
         try {
           await cancelSignupActivityApi(act.id)
           uni.showToast({ title: '已退出候补队列', icon: 'success' })
-          fetchDetail()
+          fetchDetail(true)
         } catch (err: any) {
           uni.showToast({ title: getApiErrorMessage(err, '退出候补失败'), icon: 'none' })
         } finally {
@@ -123,7 +151,7 @@ const handleEnrollAction = async () => {
         try {
           const res = await signupActivityApi(act.id)
           uni.showToast({ title: res?.message || '候补申请成功', icon: 'success' })
-          fetchDetail()
+          fetchDetail(true)
         } catch (err: any) {
           uni.showToast({ title: getApiErrorMessage(err, '候补申请失败'), icon: 'none' })
         } finally {
@@ -143,7 +171,7 @@ const handleEnrollAction = async () => {
         try {
           const res = await signupActivityApi(act.id)
           uni.showToast({ title: res?.message || '报名成功', icon: 'success' })
-          fetchDetail()
+          fetchDetail(true)
         } catch (err: any) {
           uni.showToast({ title: getApiErrorMessage(err, '报名失败'), icon: 'none' })
         } finally {
@@ -174,7 +202,7 @@ const handleCancelSignup = () => {
       try {
         const message = await cancelSignupActivityApi(act.id)
         uni.showToast({ title: message || (isWait ? '已退出候补队列' : '已取消报名，名额已释放'), icon: 'success' })
-        fetchDetail()
+        fetchDetail(true)
       } catch (err: any) {
         uni.showToast({ title: getApiErrorMessage(err, isWait ? '退出候补失败' : '取消失败'), icon: 'none' })
       } finally {
@@ -197,8 +225,48 @@ onLoad((query: any) => {
   }
 })
 
+onPullDownRefresh(async () => {
+  await fetchDetail(true)
+  uni.stopPullDownRefresh()
+})
+
 onShow(() => {
-  fetchDetail()
+  fetchDetail(activity.value ? true : false)
+  startPolling()
+})
+
+onHide(() => {
+  stopPolling()
+})
+
+onUnload(() => {
+  stopPolling()
+})
+
+// 监听多标签并发测试焦点切换事件
+const handleVisibilityChange = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    fetchDetail(true)
+  }
+}
+
+const handleWindowFocus = () => {
+  fetchDetail(true)
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
+})
+
+onUnmounted(() => {
+  stopPolling()
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('focus', handleWindowFocus)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }
 })
 </script>
 
@@ -213,6 +281,10 @@ onShow(() => {
             {{ statusInfo.statusLabel }}
           </text>
           <text v-if="activity.certificateEnabled" class="hero-tag tag-warning">颁发结业证书</text>
+          <view class="live-sync-indicator">
+            <view class="live-dot" />
+            <text class="live-text">实时同步中</text>
+          </view>
         </view>
         <view class="hero-title">{{ activity.title }}</view>
         <view class="hero-organizer">
@@ -297,7 +369,7 @@ onShow(() => {
         <view class="uni-card meta-info-card">
           <view class="meta-cell">
             <svg class="cell-svg" viewBox="0 0 24 24">
-              <path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/>
+              <path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/>
             </svg>
             <view class="cell-content">
               <view class="cell-title">起止时间</view>
@@ -402,6 +474,8 @@ onShow(() => {
 
 .hero-tag-row {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12rpx;
   margin-bottom: 16rpx;
 }
@@ -421,6 +495,41 @@ onShow(() => {
 .tag-warning {
   background-color: #e6a23c;
   color: #ffffff;
+}
+
+/* 实时同步指示器 */
+.live-sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  color: #e2e8f0;
+  margin-left: auto;
+}
+
+.live-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8rpx #10b981;
+  animation: livePulse 2s infinite ease-in-out;
+}
+
+@keyframes livePulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+    box-shadow: 0 0 12rpx #34d399;
+  }
 }
 
 .hero-title {

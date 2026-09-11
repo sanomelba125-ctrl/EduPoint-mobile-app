@@ -110,7 +110,7 @@ export async function getCurrentAMapLocation(fallbackCenter?: { latitude: number
     return await new Promise<AMapLocationResult>((resolve) => {
       const geolocation = new AMap.Geolocation({
         enableHighAccuracy: true,
-        timeout: 8000,
+        timeout: 3000,
         buttonPosition: 'RB',
         showButton: false,
         showMarker: false,

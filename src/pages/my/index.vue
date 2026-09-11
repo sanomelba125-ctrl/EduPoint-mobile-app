@@ -277,6 +277,18 @@ const navTo = (url: string) => {
         </view>
       </view>
 
+      <view class="cell-menu-item" @click="navTo('/pages/certificate/index')">
+        <view class="cell-left-part">
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M13,21L15,20.25L17,21V14H13V21M17,10.5V7L14,4L11,7V10.5C11.83,10.82 12.5,11.5 12.82,12.33C13.5,12.11 14.22,12 15,12C15.78,12 16.5,12.11 17.18,12.33C17.5,11.5 18.17,10.82 19,10.5V7L16,4L13,7V10.5C13.83,10.82 14.5,11.5 14.82,12.33C15.5,12.11 16.22,12 17,12M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
+          </svg>
+          <text class="cell-title">我的电子荣誉证书</text>
+        </view>
+        <view class="cell-right-part">
+          <text class="cell-sub-text">结营认证凭证 &gt;</text>
+        </view>
+      </view>
+
       <view class="cell-menu-item" @click="navTo('/pages/rank/index')">
         <view class="cell-left-part">
           <svg class="cell-svg" viewBox="0 0 24 24">

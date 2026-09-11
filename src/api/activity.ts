@@ -172,51 +172,72 @@ export async function getActivityPageApi(query?: ActivityPageQuery): Promise<Pag
 
 /**
  * 2.2 查询活动详情 (GET /activity/{id})
+ * 高并发优化：并行获取活动详情以及与主页相同数据源的直查分页数据，彻底抹平 Redis 缓存延迟
  */
 export async function getActivityDetailApi(id: number): Promise<ActivityItem> {
-  const res = await request<ActivityItem>({
-    url: `/activity/${id}`,
-    method: 'GET'
-  })
+  const token = uni.getStorageSync('student_token')
+
+  // 并行获取详情、实时广场列表（与主页同一直查 MySQL 来源）、以及个人报名记录
+  // 确保在并发高频报名/候补变动下，详情页的名额与状态与主页完全同频、零延迟
+  const [res, pageRes, myRes] = await Promise.all([
+    request<ActivityItem>({
+      url: `/activity/${id}`,
+      method: 'GET'
+    }),
+    request<PageResult<ActivityItem>>({
+      url: '/activity/page',
+      method: 'GET',
+      data: { page: 1, size: 50, excludeArchived: true }
+    }).catch(() => null),
+    token
+      ? request<PageResult<any>>({
+          url: '/student/activity/my-list',
+          method: 'GET',
+          data: { page: 1, size: 100 }
+        }).catch(() => null)
+      : Promise.resolve(null)
+  ])
 
   let myStatus: 'NONE' | 'ENROLLED' | 'WAITLIST' | 'COMPLETED' = 'NONE'
   let qNum: number | null = null
-  const token = uni.getStorageSync('student_token')
 
-  if (token) {
-    try {
-      const myRes = await request<PageResult<any>>({
-        url: '/student/activity/my-list',
-        method: 'GET',
-        data: { page: 1, size: 100 }
-      })
-      if (myRes && myRes.records) {
-        const found = myRes.records.find(
-          (r: any) => r.activityId === Number(id) && (r.status === 1 || r.status === 2 || r.status === 4)
-        )
-        if (found) {
-          if (found.status === 1) myStatus = 'ENROLLED'
-          else if (found.status === 2) myStatus = 'COMPLETED'
-          else if (found.status === 4) {
-            myStatus = 'WAITLIST'
-            qNum = found.queueNumber || 1
-          }
-        }
+  if (myRes && myRes.records) {
+    const found = myRes.records.find(
+      (r: any) => r.activityId === Number(id) && (r.status === 1 || r.status === 2 || r.status === 4)
+    )
+    if (found) {
+      if (found.status === 1) myStatus = 'ENROLLED'
+      else if (found.status === 2) myStatus = 'COMPLETED'
+      else if (found.status === 4) {
+        myStatus = 'WAITLIST'
+        qNum = found.queueNumber || 1
       }
-    } catch {
-      // 忽略
     }
   }
 
-  const rawCount = (res as any).participantCount !== undefined ? (res as any).participantCount : res.enrolledCount
+  // 尝试从与主页相同的数据源（GET /activity/page）提取该活动的最新直查数据
+  const matchedLive = pageRes?.records?.find(item => item.id === Number(id))
+
+  const rawCount = matchedLive?.participantCount !== undefined
+    ? matchedLive.participantCount
+    : (matchedLive?.enrolledCount !== undefined
+        ? matchedLive.enrolledCount
+        : ((res as any).participantCount !== undefined ? (res as any).participantCount : res.enrolledCount))
+
   const enrolled = rawCount !== undefined && rawCount !== null ? Number(rawCount) : 0
 
   return {
     ...res,
+    ...(matchedLive ? {
+      status: matchedLive.status,
+      registrationLimit: matchedLive.registrationLimit || res.registrationLimit,
+      waitlistEnabled: matchedLive.waitlistEnabled !== undefined ? matchedLive.waitlistEnabled : res.waitlistEnabled,
+      waitlistCount: matchedLive.waitlistCount !== undefined ? matchedLive.waitlistCount : res.waitlistCount
+    } : {}),
     enrolledCount: enrolled,
     participantCount: enrolled,
-    myEnrollmentStatus: res.myEnrollmentStatus || myStatus,
-    myQueueNumber: res.myQueueNumber || qNum
+    myEnrollmentStatus: myStatus !== 'NONE' ? myStatus : (matchedLive?.myEnrollmentStatus || res.myEnrollmentStatus || 'NONE'),
+    myQueueNumber: qNum || matchedLive?.myQueueNumber || res.myQueueNumber || null
   }
 }
 
@@ -332,4 +353,3 @@ export async function getActivityQrCodeApi(activityId: number): Promise<QrCodeVO
     method: 'GET'
   })
 }
-
