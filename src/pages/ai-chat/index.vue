@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, nextTick, onMounted, onUnmounted } from 'vue'
 import { getRecommendedFaqsApi, type AiFaqItem } from '@/api/ai'
 import { useUserStore } from '@/stores'
 
@@ -46,11 +46,29 @@ const fetchRecommendedFaqs = async () => {
   }
 }
 
-// 自动滚动到消息列表底部
+// 自动滚动到消息列表底部 (平滑节流)
+let scrollThrottleTimer: any = null
 const scrollToBottom = () => {
+  if (scrollThrottleTimer) return
+  scrollThrottleTimer = setTimeout(() => {
+    scrollThrottleTimer = null
+    nextTick(() => {
+      if (messages.value.length > 0) {
+        scrollIntoViewId.value = `msg-${messages.value[messages.value.length - 1].id}`
+      }
+    })
+  }, 60)
+}
+
+const forceScrollToBottom = () => {
   nextTick(() => {
     if (messages.value.length > 0) {
-      scrollIntoViewId.value = `msg-${messages.value[messages.value.length - 1].id}`
+      scrollIntoViewId.value = ''
+      nextTick(() => {
+        if (messages.value.length > 0) {
+          scrollIntoViewId.value = `msg-${messages.value[messages.value.length - 1].id}`
+        }
+      })
     }
   })
 }
@@ -113,20 +131,21 @@ const sendMessage = async (questionText?: string) => {
     content: text,
     time: formatTime()
   })
-  scrollToBottom()
+  forceScrollToBottom()
 
-  // 2. 准备 AI 助手回答气泡
+  // 2. 准备 AI 助手回答气泡 (使用 reactive 响应式对象封装，确保每一帧流式更新即时触发 Vue 3 渲染)
   const assistantMsgId = 'a_' + Date.now()
-  const assistantMsg: ChatMessage = {
+  const assistantMsg = reactive<ChatMessage>({
     id: assistantMsgId,
     role: 'assistant',
     content: '',
     source: '',
     isStreaming: true,
     time: formatTime()
-  }
+  })
   messages.value.push(assistantMsg)
-  scrollToBottom()
+  const assistantIndex = messages.value.length - 1
+  forceScrollToBottom()
 
   isGenerating.value = true
 
@@ -178,6 +197,9 @@ const sendMessage = async (questionText?: string) => {
 
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
           assistantMsg.isStreaming = false
+          if (messages.value[assistantIndex]) {
+            messages.value[assistantIndex].isStreaming = false
+          }
           break
         }
 
@@ -187,12 +209,21 @@ const sendMessage = async (questionText?: string) => {
             const data = JSON.parse(jsonStr)
             if (data.content) {
               assistantMsg.content += data.content
+              if (messages.value[assistantIndex]) {
+                messages.value[assistantIndex].content = assistantMsg.content
+              }
             }
             if (data.source) {
               assistantMsg.source = data.source
+              if (messages.value[assistantIndex]) {
+                messages.value[assistantIndex].source = data.source
+              }
             }
             if (data.finish) {
               assistantMsg.isStreaming = false
+              if (messages.value[assistantIndex]) {
+                messages.value[assistantIndex].isStreaming = false
+              }
             }
             scrollToBottom()
           } catch (e) {
@@ -207,13 +238,19 @@ const sendMessage = async (questionText?: string) => {
     } else {
       assistantMsg.content += (assistantMsg.content ? '\n\n' : '') +
         '⚠️ 【网络连接提示】小助手未能及时收到服务器回复，请检查网络或稍后重试。'
+      if (messages.value[assistantIndex]) {
+        messages.value[assistantIndex].content = assistantMsg.content
+      }
       uni.showToast({ title: '连接中断或超时', icon: 'none' })
     }
   } finally {
     assistantMsg.isStreaming = false
+    if (messages.value[assistantIndex]) {
+      messages.value[assistantIndex].isStreaming = false
+    }
     isGenerating.value = false
     currentAbortController.value = null
-    scrollToBottom()
+    forceScrollToBottom()
   }
 }
 
