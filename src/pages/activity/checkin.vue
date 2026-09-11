@@ -12,6 +12,7 @@ import { getApiErrorMessage } from '@/utils/request'
 import {
   getCurrentAMapLocation,
   getAMapDistance,
+  isValidCoordinatePair,
 } from '@/utils/amap'
 
 const userStore = useUserStore()
@@ -24,18 +25,13 @@ const checkingIn = ref(false)
 // 电脑端模拟扫码：JSON / 文本输入框
 const rawQrInput = ref<string>('')
 
-// 定位模式：'BENCHMARK' (现场实训基准点·0m必过，适合电脑端调试) | 'REAL_GPS' (真实高德 GPS/IP 定位)
-const locationMode = ref<'BENCHMARK' | 'REAL_GPS'>('BENCHMARK')
-
 // 当前考勤定位坐标与逆地理编码详细地址
-const currentLat = ref<number>(30.523910)
-const currentLon = ref<number>(114.364020)
-const distanceToCenter = ref<number>(0)
-const isWithinRadius = ref<boolean>(true)
-const amapAddress = ref<string>('正在同步高德现场基准点...')
+const currentLat = ref<number | null>(null)
+const currentLon = ref<number | null>(null)
+const distanceToCenter = ref<number | null>(null)
+const isWithinRadius = ref<boolean>(false)
+const amapAddress = ref<string>('等待获取设备真实定位...')
 const amapLoading = ref<boolean>(false)
-const amapSource = ref<string>('CALIBRATED')
-const isCalibrated = ref<boolean>(true)
 
 // 成功弹窗
 const showSuccessModal = ref(false)
@@ -45,83 +41,44 @@ const loadActivity = async () => {
   try {
     const act = await getActivityDetailApi(actId.value)
     activity.value = act
-    // 默认优先现场基准模式，解决电脑端无物理 GPS 导致跨城超距拦截的问题
-    if (locationMode.value === 'BENCHMARK') {
-      applyBenchmarkLocation()
-    } else {
-      updateGpsDistance()
-    }
+    await updateGpsDistance(true)
   } catch (err: any) {
     uni.showToast({ title: err?.message || '加载活动信息失败', icon: 'none' })
   }
 }
 
 /**
- * 设为活动现场打卡基准点 (0m，必过，电脑端调试首选)
+ * 获取设备真实定位并进行逆地理编码与测距
  */
-const applyBenchmarkLocation = () => {
-  if (!activity.value) return
-  currentLat.value = activity.value.latitude
-  currentLon.value = activity.value.longitude
-  distanceToCenter.value = 0
-  isWithinRadius.value = true
-  isCalibrated.value = true
-  amapSource.value = 'CALIBRATED'
-  amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动现场考勤基准点 (高德定位已核验)'
-}
-
-/**
- * 切换至现场基准点模式
- */
-const switchToBenchmarkMode = () => {
-  locationMode.value = 'BENCHMARK'
-  applyBenchmarkLocation()
-  uni.showToast({ title: '已切换为现场基准 (0m)', icon: 'success' })
-}
-
-/**
- * 切换至真实高德定位
- */
-const switchToRealGpsMode = () => {
-  locationMode.value = 'REAL_GPS'
-  updateGpsDistance(false)
-}
-
-/**
- * 获取高德地图真实定位并进行逆地理编码与测距
- */
-const updateGpsDistance = async (forceCalibrate = false) => {
-  if (!activity.value) return
+const updateGpsDistance = async (silent = false): Promise<boolean> => {
+  if (!activity.value) return false
   amapLoading.value = true
 
-  if (forceCalibrate) {
-    switchToBenchmarkMode()
-    amapLoading.value = false
-    return
-  }
-
   try {
-    const loc = await getCurrentAMapLocation({
-      latitude: activity.value.latitude,
-      longitude: activity.value.longitude,
-      address: activity.value.locationAddress || activity.value.locationName
-    })
+    const loc = await getCurrentAMapLocation()
 
     currentLat.value = loc.latitude
     currentLon.value = loc.longitude
     amapAddress.value = loc.formattedAddress
-    amapSource.value = loc.source
-    isCalibrated.value = !!loc.isSimulated
     calcDist()
+    return true
   } catch (err: any) {
-    calcDist()
+    currentLat.value = null
+    currentLon.value = null
+    distanceToCenter.value = null
+    isWithinRadius.value = false
+    amapAddress.value = '未获取到真实定位，请开启定位权限后重试'
+    if (!silent) {
+      uni.showToast({ title: getApiErrorMessage(err, '获取定位失败'), icon: 'none' })
+    }
+    return false
   } finally {
     amapLoading.value = false
   }
 }
 
 const calcDist = () => {
-  if (!activity.value) return
+  if (!activity.value || currentLat.value === null || currentLon.value === null) return
   const dist = getAMapDistance(
     currentLat.value,
     currentLon.value,
@@ -203,9 +160,9 @@ const parseQrPayload = (qrRawText: string): ParsedQrData => {
     throw new Error('未识别到有效的 nonce 或 sign 防伪签名，请检查 JSON 格式')
   }
 
-  // 如果 JSON 中未指明 activityId，则默认使用当前活动
+  // 二维码必须明确绑定活动，不能用当前页面活动 ID 静默补齐。
   if (!activityId || isNaN(activityId) || activityId <= 0) {
-    activityId = actId.value
+    throw new Error('二维码缺少有效的 activityId，请重新获取该活动签到码')
   }
 
   return { activityId, nonce, sign }
@@ -229,17 +186,7 @@ const handleParseAndCheckinClick = () => {
 
     setTimeout(() => {
       if (parsed.activityId !== actId.value) {
-        uni.showModal({
-          title: '活动 ID 提醒',
-          content: `识别到的数据属于活动 [${parsed.activityId}]，而当前页面为 [${actId.value}]。\n是否继续为活动 [${parsed.activityId}] 打卡？`,
-          confirmText: '确认打卡',
-          cancelText: '取消',
-          success: (mRes) => {
-            if (mRes.confirm) {
-              doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
-            }
-          }
-        })
+        uni.showToast({ title: `该签到码属于活动 ${parsed.activityId}，请进入对应活动打卡`, icon: 'none' })
         return
       }
       doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
@@ -282,22 +229,33 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
     uni.showToast({ title: '活动信息无效，请从活动详情页进入签到', icon: 'none' })
     return
   }
+  if (qrActivityId !== actId.value) {
+    uni.showToast({ title: '签到码与当前活动不匹配', icon: 'none' })
+    return
+  }
+  if (!activity.value) {
+    uni.showToast({ title: '活动信息尚未加载完成', icon: 'none' })
+    return
+  }
+
+  const requiresLocation = activity.value.locationCheckEnabled === 1
+  if (requiresLocation && !isValidCoordinatePair(activity.value.longitude, activity.value.latitude)) {
+    uni.showToast({ title: '活动地点坐标无效，请联系管理员', icon: 'none' })
+    return
+  }
+
+  if (requiresLocation && (currentLat.value === null || currentLon.value === null)) {
+    const located = await updateGpsDistance(false)
+    if (!located) return
+  }
 
   // 高德定位范围核验
   if (activity.value?.locationCheckEnabled && !isWithinRadius.value) {
     uni.showModal({
       title: '高德定位核验未通过',
-      content: `当前距活动中心 ${distanceToCenter.value} 米，超出打卡允许半径（≤ ${activity.value.locationRadius || 500} 米）。\n\n是否一键切换至【现场打卡基准点】继续完成打卡？`,
-      confirmText: '校准并打卡',
-      cancelText: '取消',
-      success: (mRes) => {
-        if (mRes.confirm) {
-          switchToBenchmarkMode()
-          setTimeout(() => {
-            doCheckin(qrNonce, qrSign, qrActivityId)
-          }, 300)
-        }
-      }
+      content: `当前距活动中心 ${distanceToCenter.value} 米，超出打卡允许半径（≤ ${activity.value.locationRadius || 500} 米）。请到达现场后刷新定位再打卡。`,
+      showCancel: false,
+      confirmText: '我知道了'
     })
     return
   }
@@ -306,12 +264,14 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
   uni.showLoading({ title: '高德核验并打卡...', mask: true })
 
   try {
+    const locationData = currentLat.value !== null && currentLon.value !== null
+      ? { checkinLatitude: currentLat.value, checkinLongitude: currentLon.value }
+      : {}
     const res = await checkinActivityApi({
       activityId: qrActivityId,
       nonce: qrNonce,
       sign: qrSign,
-      checkinLatitude: currentLat.value,
-      checkinLongitude: currentLon.value
+      ...locationData
     })
 
     uni.hideLoading()
@@ -354,14 +314,11 @@ const handleRealScan = () => {
   // #endif
 
   // #ifdef H5
-  // H5 电脑端：若输入框有内容则解析输入框，无内容则自动填入示例并触发打卡
+  // H5 电脑端没有摄像头桥接，仅支持粘贴真实二维码内容。
   if (rawQrInput.value.trim()) {
     handleParseAndCheckinClick()
   } else {
-    handleFillSampleJson()
-    setTimeout(() => {
-      handleParseAndCheckinClick()
-    }, 200)
+    uni.showToast({ title: '请先粘贴真实签到二维码内容', icon: 'none' })
   }
   // #endif
 }
@@ -496,31 +453,21 @@ onLoad((query: any) => {
         </button>
       </view>
 
-      <!-- 高德地图智能考勤定位卡片 (支持现场基准与真实 GPS 双模式) -->
+      <!-- 真实设备定位与考勤范围核验 -->
       <view class="amap-badge-card" :class="{ 'amap-warning': !isWithinRadius }">
         <view class="amap-top-row">
           <view class="amap-brand">
             <svg class="amap-logo-svg" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/></svg>
-            <text class="amap-brand-title">高德地图考勤定位</text>
-            <text class="amap-tag-pill" :class="{ 'pill-benchmark': locationMode === 'BENCHMARK' }">
-              {{ locationMode === 'BENCHMARK' ? '📍 现场基准(0m)' : '🛰️ 真实定位' }}
-            </text>
+            <text class="amap-brand-title">设备考勤定位</text>
+            <text class="amap-tag-pill">真实定位</text>
           </view>
-          <!-- 模式切换选择器 -->
           <view class="amap-mode-tabs">
             <view
               class="mode-tab-btn"
-              :class="{ active: locationMode === 'BENCHMARK' }"
-              @click="switchToBenchmarkMode"
+              :class="{ active: !amapLoading }"
+              @click="updateGpsDistance(false)"
             >
-              现场基准
-            </view>
-            <view
-              class="mode-tab-btn"
-              :class="{ active: locationMode === 'REAL_GPS' }"
-              @click="switchToRealGpsMode"
-            >
-              {{ amapLoading ? '定位中...' : '真实GPS' }}
+              {{ amapLoading ? '定位中...' : '刷新定位' }}
             </view>
           </view>
         </view>
@@ -532,13 +479,16 @@ onLoad((query: any) => {
         </view>
 
         <!-- 考勤范围与高德测距判定 -->
-        <view class="amap-status-strip">
+        <view v-if="distanceToCenter !== null" class="amap-status-strip">
           <text v-if="isWithinRadius" class="status-ok">
             ✓ 高德核验合格：距打卡中心 {{ distanceToCenter }} 米（允许 ≤ {{ activity?.locationRadius || 500 }}m）
           </text>
           <text v-else class="status-warn">
             ✕ 超出打卡范围：距中心点 {{ distanceToCenter }} 米（要求 ≤ {{ activity?.locationRadius || 500 }}m）
           </text>
+        </view>
+        <view v-else class="amap-status-strip">
+          <text class="status-warn">尚未取得真实定位，暂不能提交打卡</text>
         </view>
       </view>
     </view>
@@ -549,7 +499,7 @@ onLoad((query: any) => {
         <svg class="scan-btn-svg" viewBox="0 0 24 24">
           <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
         </svg>
-        <text>{{ checkingIn ? '正在校验防伪与考勤...' : '模拟扫描现场动态二维码打卡' }}</text>
+        <text>{{ checkingIn ? '正在校验防伪与考勤...' : '扫描或解析现场动态二维码' }}</text>
       </button>
     </view>
 

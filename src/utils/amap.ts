@@ -96,98 +96,71 @@ export interface AMapLocationResult {
   township?: string
   street?: string
   streetNumber?: string
-  isSimulated?: boolean
-  source: 'AMAP_GPS' | 'AMAP_IP' | 'BROWSER_FALLBACK' | 'CALIBRATED'
+  source: 'DEVICE_GPS'
 }
 
 /**
- * 获取当前高德高精度定位（并自动完成逆地理编码解析出结构化地址）
+ * 获取设备真实定位。定位失败时必须抛错，不能用活动打卡点冒充当前位置。
  */
-export async function getCurrentAMapLocation(fallbackCenter?: { latitude: number; longitude: number; address?: string }): Promise<AMapLocationResult> {
-  try {
-    const AMap = await loadAMapSDK()
+export function getCurrentAMapLocation(): Promise<AMapLocationResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timeoutId = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        reject(new Error('获取设备定位超时，请检查定位权限后重试'))
+      }
+    }, 10000)
 
-    return await new Promise<AMapLocationResult>((resolve) => {
-      const geolocation = new AMap.Geolocation({
-        enableHighAccuracy: true,
-        timeout: 3000,
-        buttonPosition: 'RB',
-        showButton: false,
-        showMarker: false,
-        showCircle: false,
-        panToLocation: false,
-        needAddress: true,
-        extensions: 'all'
-      })
+    const rejectOnce = (error: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      reject(error)
+    }
 
-      geolocation.getCurrentPosition(async (status: string, result: any) => {
-        if (status === 'complete' && result && result.position) {
-          const lat = result.position.getLat()
-          const lng = result.position.getLng()
-          const addr = result.formattedAddress || '已获取高德实时定位'
-          resolve({
-            latitude: Number(lat.toFixed(6)),
-            longitude: Number(lng.toFixed(6)),
-            accuracy: result.accuracy || 15,
-            formattedAddress: addr,
-            province: result.addressComponent?.province,
-            city: result.addressComponent?.city,
-            district: result.addressComponent?.district,
-            township: result.addressComponent?.township,
-            street: result.addressComponent?.street,
-            streetNumber: result.addressComponent?.streetNumber,
-            source: 'AMAP_GPS'
-          })
+    uni.getLocation({
+      type: 'gcj02',
+      altitude: false,
+      geocode: true,
+      success: async (result: any) => {
+        if (settled) return
+        const latitude = Number(result.latitude)
+        const longitude = Number(result.longitude)
+        if (!isValidCoordinatePair(longitude, latitude)) {
+          rejectOnce(new Error('设备返回的定位坐标无效'))
           return
         }
 
-        // 尝试通过 IP 城市降级定位
-        geolocation.getCityInfo(async (cityStatus: string, cityResult: any) => {
-          if (cityStatus === 'complete' && cityResult && cityResult.center) {
-            const [lng, lat] = cityResult.center
-            const fullAddr = `${cityResult.province || ''}${cityResult.city || ''}（IP定位）`
-            resolve({
-              latitude: Number(Number(lat).toFixed(6)),
-              longitude: Number(Number(lng).toFixed(6)),
-              formattedAddress: fullAddr,
-              province: cityResult.province,
-              city: cityResult.city,
-              source: 'AMAP_IP'
-            })
-            return
-          }
+        let formattedAddress = result.address?.formattedAddress || result.address || ''
+        // #ifdef H5
+        if (!formattedAddress) {
+          formattedAddress = await getAMapAddress(latitude, longitude)
+        }
+        // #endif
 
-          // 若在无外网/权限被拒环境下，使用校准回退点（例如活动打卡点附近）
-          if (fallbackCenter) {
-            resolve({
-              latitude: fallbackCenter.latitude,
-              longitude: fallbackCenter.longitude,
-              formattedAddress: fallbackCenter.address || '湖北省武汉市洪山区活动打卡点现场（高德基准）',
-              isSimulated: true,
-              source: 'CALIBRATED'
-            })
-          } else {
-            resolve({
-              latitude: 30.524100,
-              longitude: 114.364200,
-              formattedAddress: '湖北省武汉市洪山区大学园路1号校园中心',
-              isSimulated: true,
-              source: 'CALIBRATED'
-            })
-          }
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        resolve({
+          latitude: Number(latitude.toFixed(6)),
+          longitude: Number(longitude.toFixed(6)),
+          accuracy: Number(result.accuracy) || undefined,
+          formattedAddress: formattedAddress || `经度:${longitude.toFixed(4)}, 纬度:${latitude.toFixed(4)}`,
+          source: 'DEVICE_GPS'
         })
-      })
-    })
-  } catch {
-    // 捕获异常降级处理
-    return {
-      latitude: fallbackCenter?.latitude || 30.524100,
-      longitude: fallbackCenter?.longitude || 114.364200,
-      formattedAddress: fallbackCenter?.address || '湖北省武汉市洪山区大学园路1号活动现场（高德基准）',
-      isSimulated: true,
-      source: 'CALIBRATED'
-    }
-  }
+      },
+      fail: (error: any) => {
+        rejectOnce(new Error(error?.errMsg || '无法获取设备定位，请检查定位权限'))
+      }
+    } as any)
+  })
+}
+
+export function isValidCoordinatePair(longitude: unknown, latitude: unknown): boolean {
+  const lng = Number(longitude)
+  const lat = Number(latitude)
+  return Number.isFinite(lng) && Number.isFinite(lat) && lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90
 }
 
 /**
@@ -264,4 +237,54 @@ export function getAMapDistance(lat1: number, lon1: number, lat2: number, lon2: 
     Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return Math.round(R * c)
+}
+
+export interface NavigationOptions {
+  fromLng?: number
+  fromLat?: number
+  fromName?: string
+  toLng: number
+  toLat: number
+  toName: string
+  toAddress?: string
+  mode?: 'walk' | 'ride' | 'car'
+}
+
+/**
+ * 唤起高德地图导航服务
+ * 支持 H5 端调用高德官方 URI / 客户端呼起，以及跨端 uni.openLocation
+ */
+export function openAMapNavigation(options: NavigationOptions): void {
+  const { fromLng, fromLat, fromName = '我的位置', toLng, toLat, toName, toAddress, mode = 'walk' } = options
+
+  if (!isValidCoordinatePair(toLng, toLat)) {
+    uni.showToast({ title: '活动地点坐标无效', icon: 'none' })
+    return
+  }
+
+  // #ifdef H5
+  if (typeof window !== 'undefined') {
+    // 构造高德官方 Web / App 呼起 URI
+    // 官方规范：https://lbs.amap.com/api/uri-api/guide/travel/route
+    let uri = `https://uri.amap.com/navigation?to=${toLng},${toLat},${encodeURIComponent(toName)}&mode=${mode}&callnative=1`
+    if (isValidCoordinatePair(fromLng, fromLat)) {
+      uri += `&from=${fromLng},${fromLat},${encodeURIComponent(fromName)}`
+    }
+    window.open(uri, '_blank')
+    return
+  }
+  // #endif
+
+  // 小程序或原生 App 环境使用 uni.openLocation
+  uni.openLocation({
+    latitude: toLat,
+    longitude: toLng,
+    name: toName,
+    address: toAddress || toName,
+    scale: 16,
+    fail: (err: any) => {
+      console.warn('uni.openLocation 调用失败，降级提示:', err)
+      uni.showToast({ title: '未能打开地图导航', icon: 'none' })
+    }
+  })
 }

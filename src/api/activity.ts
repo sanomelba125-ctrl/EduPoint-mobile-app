@@ -54,8 +54,8 @@ export interface CheckinParams {
   activityId: number
   nonce: string
   sign: string
-  checkinLatitude: number
-  checkinLongitude: number
+  checkinLatitude?: number
+  checkinLongitude?: number
 }
 
 export interface CheckinResult {
