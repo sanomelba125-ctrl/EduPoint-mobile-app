@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { initStudentWebSocket, closeStudentWebSocket } from '@/utils/websocket'
 
 export interface StudentUserInfo {
   id: number | null
@@ -61,6 +62,9 @@ export const useUserStore = defineStore('user', () => {
       ...info
     }
     uni.setStorageSync('student_info', JSON.stringify(userInfo.value))
+    if (userInfo.value.id) {
+      initStudentWebSocket(userInfo.value.id)
+    }
   }
 
   // 变动积分（如兑换礼品扣除负数、活动签到奖励正数）
@@ -75,6 +79,7 @@ export const useUserStore = defineStore('user', () => {
 
   // 退出登录
   const logout = () => {
+    closeStudentWebSocket()
     token.value = ''
     userInfo.value = { ...DEFAULT_USER_INFO }
     uni.removeStorageSync('student_token')

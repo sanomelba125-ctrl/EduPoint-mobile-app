@@ -5,12 +5,15 @@ import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import { getStudentProfileApi, updateStudentProfileApi } from '@/api/auth'
 import { getMyOrdersApi } from '@/api/gift'
+import { getUnreadNoticeCountApi } from '@/api/notice'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
 
 // 待提货核销订单数量（动态统计）
 const pendingOrdersCount = ref(0)
+// 未读系统通知数量
+const unreadNoticeCount = ref(0)
 
 // 编辑资料弹窗状态与表单
 const showEditModal = ref(false)
@@ -45,6 +48,14 @@ const refreshProfile = async () => {
     pendingOrdersCount.value = ordersRes?.total ?? 0
   } catch (err) {
     pendingOrdersCount.value = 0
+  }
+
+  // 动态同步未读系统通知数量
+  try {
+    const noticeCount = await getUnreadNoticeCountApi()
+    unreadNoticeCount.value = noticeCount || 0
+  } catch (err) {
+    unreadNoticeCount.value = 0
   }
 }
 
@@ -274,6 +285,19 @@ const navTo = (url: string) => {
         <view class="cell-right-part">
           <text v-if="pendingOrdersCount > 0" class="cell-sub-warning">{{ pendingOrdersCount }} 件待提货 &gt;</text>
           <text v-else class="cell-sub-text">暂无待提货 &gt;</text>
+        </view>
+      </view>
+
+      <view class="cell-menu-item" @click="navTo('/pages/my/notices')">
+        <view class="cell-left-part">
+          <svg class="cell-svg" viewBox="0 0 24 24">
+            <path d="M12 22C13.1 22 14 21.1 14 20H10C10 21.1 10.9 22 12 22M18 16V11C18 7.93 16.37 5.36 13.5 4.68V4C13.5 3.17 12.83 2.5 12 2.5C11.17 2.5 10.5 3.17 10.5 4V4.68C7.64 5.36 6 7.92 6 11V16L4 18V19H20V18L18 16Z"/>
+          </svg>
+          <text class="cell-title">消息通知中心</text>
+        </view>
+        <view class="cell-right-part">
+          <text v-if="unreadNoticeCount > 0" class="cell-sub-warning">{{ unreadNoticeCount }} 条新通知 &gt;</text>
+          <text v-else class="cell-sub-text">查看通知 &gt;</text>
         </view>
       </view>
 

@@ -82,6 +82,13 @@
       }
     },
     {
+      "path": "pages/my/notices",
+      "style": {
+        "navigationBarTitleText": "消息通知中心",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
       "path": "pages/certificate/index",
       "style": {
         "navigationBarTitleText": "权威电子结项证书",
