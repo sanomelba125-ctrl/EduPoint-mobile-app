@@ -5,6 +5,12 @@ let isConnected = false
 let reconnectTimer: any = null
 
 /**
+ * 子协议标记，必须与后端 WebSocketConstants.PROTOCOL_MARKER 保持一致。
+ * 浏览器 WebSocket 无法自定义请求头，因此用 [标记, token] 两个子协议把登录凭据带给服务端。
+ */
+const WS_SUB_PROTOCOL_MARKER = 'satoken'
+
+/**
  * 获取当前环境的 WebSocket 服务器连接地址
  */
 function getWebSocketUrl(studentId: number | string): string {
@@ -27,6 +33,13 @@ export function initStudentWebSocket(studentId?: number | string | null) {
   const uid = studentId || userStore.userInfo?.id
   if (!uid || !userStore.isLoggedIn) return
 
+  // 握手必须携带登录凭据，缺失时直接跳过，避免反复发起必然被拒绝的连接
+  const token = uni.getStorageSync('student_token')
+  if (!token) {
+    console.warn('[Mobile WS] 未获取到登录凭据，跳过实时推送连接')
+    return
+  }
+
   if (socketTask && isConnected) {
     return
   }
@@ -37,6 +50,7 @@ export function initStudentWebSocket(studentId?: number | string | null) {
   try {
     socketTask = uni.connectSocket({
       url,
+      protocols: [WS_SUB_PROTOCOL_MARKER, token],
       success: () => {
         console.log('[Mobile WS] 发起连接成功')
       },
