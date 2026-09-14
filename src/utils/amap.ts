@@ -180,26 +180,54 @@ export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
   await ensureLocationAuthorization()
 
   // #ifdef H5
-  // 在 H5 浏览器环境下，优先使用已注入高德安全密钥的 AMap.Geolocation
-  // 核心参数：完全关闭原生浏览器定位 (noGeoLocation: 3)，优先走高德 IP/Wi-Fi 网络定位，杜绝 Chrome 请求 Google NLP 造成的 ERR_BLOCKED_BY_CLIENT
+  // 1. 优先尝试标准浏览器原生 Geolocation（在 Chrome/Edge/移动端直接通过系统定位服务返回高精度真实坐标）
+  if (typeof navigator !== 'undefined' && navigator.geolocation) {
+    try {
+      const navPos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 4000,
+          maximumAge: 10000
+        })
+      })
+      if (navPos && navPos.coords) {
+        const lat = navPos.coords.latitude
+        const lng = navPos.coords.longitude
+        if (isValidCoordinatePair(lng, lat)) {
+          let addr = `设备定位 (经度:${lng.toFixed(4)}, 纬度:${lat.toFixed(4)})`
+          try {
+            addr = await getAMapAddress(lat, lng)
+          } catch {}
+          return {
+            latitude: Number(lat.toFixed(6)),
+            longitude: Number(lng.toFixed(6)),
+            accuracy: navPos.coords.accuracy,
+            formattedAddress: addr,
+            source: 'DEVICE_GPS'
+          }
+        }
+      }
+    } catch (navErr) {
+      console.warn('原生浏览器定位未返回，尝试高德定位通道...', navErr)
+    }
+  }
+
+  // 2. 尝试使用高德 AMap.Geolocation
   try {
     const AMap = await loadAMapSDK()
     if (AMap && AMap.Geolocation) {
       const aMapLoc = await new Promise<any>((res, rej) => {
         const geolocation = new AMap.Geolocation({
-          enableHighAccuracy: false, // 禁用原生高精度 GPS 探针，防止 Chrome 调用 Google NLP
+          enableHighAccuracy: true,
           timeout: 4000,
           needAddress: true,
           extensions: 'all',
-          GeoLocationFirst: false, // 优先使用高德自建网络定位通道
-          noGeoLocation: 3,        // 核心：3=都不用原生定位（不论是PC还是手机模拟器），彻底杜绝 Google NLP (ERR_BLOCKED_BY_CLIENT)
-          getCityWhenFail: true    // 失败时降级返回城市定位
+          getCityWhenFail: true
         })
         geolocation.getCurrentPosition((status: string, result: any) => {
           if (status === 'complete' && result && (result.position || result.center)) {
             res(result)
           } else {
-            // 降级使用 IP 城市定位，获取城市中心经纬度与地名
             geolocation.getCityInfo((cityStatus: string, cityResult: any) => {
               if (cityStatus === 'complete' && (cityResult.center || cityResult.position)) {
                 res({
@@ -209,7 +237,6 @@ export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
                   province: cityResult.province
                 })
               } else {
-                // 第三道兜底：AMap.CitySearch 纯服务端 IP 城市定位（100% 不触发浏览器原生网络提供商）
                 try {
                   AMap.plugin('AMap.CitySearch', () => {
                     const citySearch = new AMap.CitySearch()

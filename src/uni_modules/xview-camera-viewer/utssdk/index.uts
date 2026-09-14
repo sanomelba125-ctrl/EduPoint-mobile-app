@@ -1,0 +1,19 @@
+/**
+ * xview-camera-viewer UTS 原生跨平台接口定义
+ */
+export type CameraScanCallback = (result: string) => void
+
+export interface CameraViewerOptions {
+  preferFront?: boolean
+  scanInterval?: number
+  autoStart?: boolean
+}
+
+export function isCameraSupported(): boolean {
+  // #ifdef H5
+  return typeof navigator !== 'undefined' && !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia
+  // #endif
+  // #ifndef H5
+  return true
+  // #endif
+}
