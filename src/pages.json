@@ -62,7 +62,8 @@
     {
       "path": "pages/activity/detail",
       "style": {
-        "navigationBarTitleText": "活动详情"
+        "navigationBarTitleText": "活动详情",
+        "enablePullDownRefresh": true
       }
     },
     {
@@ -92,6 +93,22 @@
       "style": {
         "navigationBarTitleText": "消息通知中心",
         "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/certificate/index",
+      "style": {
+        "navigationBarTitleText": "权威电子结项证书",
+        "navigationBarBackgroundColor": "#0f172a",
+        "navigationBarTextStyle": "white"
+      }
+    },
+    {
+      "path": "pages/certificate/verify",
+      "style": {
+        "navigationBarTitleText": "电子荣誉证书真伪核验",
+        "navigationBarBackgroundColor": "#ffffff",
+        "navigationBarTextStyle": "black"
       }
     },
     {

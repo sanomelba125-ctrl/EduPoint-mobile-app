@@ -1,0 +1,12 @@
+{
+  "id": "xview-camera-viewer",
+  "name": "xview-camera-viewer",
+  "version": "1.0.0",
+  "description": "uni-app 原生 UTS 与 H5 前置摄像头动态扫码取景插件",
+  "displayName": "xview-camera-viewer 原生相机插件",
+  "uni_modules": {
+    "scripts": {},
+    "dependencies": [],
+    "encrypt": []
+  }
+}
