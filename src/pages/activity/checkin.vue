@@ -127,7 +127,7 @@ const toggleFlashlight = () => {
 }
 
 /**
- * 解析二维码内容（兼容 JSON 格式、URL Query 参数格式及防伪字符串）
+ * 解析二维码内容（全面兼容 Hash 路由 URL、Query 参数、JSON 格式及防伪字符串）
  */
 interface ParsedQrData {
   activityId: number
@@ -141,8 +141,19 @@ const parseQrPayload = (qrRawText: string): ParsedQrData => {
   }
 
   let text = qrRawText.trim()
+  // 去除包裹的双引号或单引号
   if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
     text = text.slice(1, -1).trim()
+  }
+
+  // 尝试 URL 自动反编码（若包含编码字符）
+  if (text.includes('%')) {
+    try {
+      const decoded = decodeURIComponent(text)
+      if (decoded.includes('nonce') || decoded.includes('sign') || decoded.includes('{')) {
+        text = decoded
+      }
+    } catch {}
   }
 
   let nonce = ''
@@ -152,44 +163,97 @@ const parseQrPayload = (qrRawText: string): ParsedQrData => {
   // 1. JSON 格式自动解析
   if (text.startsWith('{') || text.includes('"nonce"') || text.includes("'nonce'")) {
     try {
-      const normalizedJson = text.replace(/'/g, '"')
-      const parsed = JSON.parse(normalizedJson)
-      if (parsed.nonce) nonce = String(parsed.nonce).trim()
-      if (parsed.sign) sign = String(parsed.sign).trim()
-      if (parsed.activityId) targetAid = Number(parsed.activityId)
-      else if (parsed.actId) targetAid = Number(parsed.actId)
+      const jsonStart = text.indexOf('{')
+      const jsonEnd = text.lastIndexOf('}')
+      if (jsonStart !== -1 && jsonEnd > jsonStart) {
+        const jsonCandidate = text.substring(jsonStart, jsonEnd + 1)
+        const normalizedJson = jsonCandidate.replace(/'/g, '"')
+        const parsed = JSON.parse(normalizedJson)
+        if (parsed.nonce) nonce = String(parsed.nonce).trim()
+        if (parsed.sign || parsed.signature || parsed.signToken) {
+          sign = String(parsed.sign || parsed.signature || parsed.signToken).trim()
+        }
+        if (parsed.activityId) targetAid = Number(parsed.activityId)
+        else if (parsed.actId) targetAid = Number(parsed.actId)
+        else if (parsed.id) targetAid = Number(parsed.id)
 
-      if (parsed.checkinLatitude !== undefined && parsed.checkinLatitude !== null) {
-        currentLat.value = Number(parsed.checkinLatitude)
-      }
-      if (parsed.checkinLongitude !== undefined && parsed.checkinLongitude !== null) {
-        currentLon.value = Number(parsed.checkinLongitude)
+        if (parsed.checkinLatitude !== undefined && parsed.checkinLatitude !== null) {
+          currentLat.value = Number(parsed.checkinLatitude)
+        }
+        if (parsed.checkinLongitude !== undefined && parsed.checkinLongitude !== null) {
+          currentLon.value = Number(parsed.checkinLongitude)
+        }
       }
     } catch {
-      const nonceMatch = text.match(/["']?nonce["']?\s*:\s*["']([^"']+)["']/)
-      const signMatch = text.match(/["']?sign["']?\s*:\s*["']([^"']+)["']/)
-      const actIdMatch = text.match(/["']?(?:activityId|actId)["']?\s*:\s*["']?(\d+)["']?/)
+      const nonceMatch = text.match(/["']?nonce["']?\s*:\s*["']([^"']+)["']/i)
+      const signMatch = text.match(/["']?(?:sign|signToken|signature)["']?\s*:\s*["']([^"']+)["']/i)
+      const actIdMatch = text.match(/["']?(?:activityId|actId|id)["']?\s*:\s*["']?(\d+)["']?/i)
       if (nonceMatch) nonce = nonceMatch[1].trim()
       if (signMatch) sign = signMatch[1].trim()
       if (actIdMatch) targetAid = Number(actIdMatch[1])
     }
   }
 
-  // 2. URL 或 QueryString 参数格式解析
+  // 2. URL 或 Hash Query 参数解析（修复重点：提取哈希路由中的参数，如 /#/checkin?actId=...&nonce=...&sign=...）
   if (!nonce || !sign) {
     try {
-      const urlCandidate = text.startsWith('http') ? text : `http://localhost?${text}`
+      const urlCandidate = text.startsWith('http') ? text : `http://localhost/${text.startsWith('/') ? text.slice(1) : text}`
       const urlObj = new URL(urlCandidate)
-      const n = urlObj.searchParams.get('nonce')
-      const s = urlObj.searchParams.get('sign')
-      const aid = urlObj.searchParams.get('actId') || urlObj.searchParams.get('activityId')
-      if (n) nonce = n.trim()
-      if (s) sign = s.trim()
-      if (aid) targetAid = Number(aid)
+
+      // 2.1 从常规 searchParams 提取
+      if (!nonce) nonce = urlObj.searchParams.get('nonce') || ''
+      if (!sign) sign = urlObj.searchParams.get('sign') || urlObj.searchParams.get('signToken') || urlObj.searchParams.get('signature') || ''
+      if (!targetAid) {
+        const aid = urlObj.searchParams.get('actId') || urlObj.searchParams.get('activityId') || urlObj.searchParams.get('id')
+        if (aid) targetAid = Number(aid)
+      }
+
+      // 2.2 从 hash 路径内部提取（如 #/checkin?actId=1&nonce=...&sign=...）
+      if ((!nonce || !sign) && urlObj.hash && urlObj.hash.includes('?')) {
+        const hashQuery = urlObj.hash.substring(urlObj.hash.indexOf('?') + 1)
+        const hashParams = new URLSearchParams(hashQuery)
+        if (!nonce) nonce = hashParams.get('nonce') || ''
+        if (!sign) sign = hashParams.get('sign') || hashParams.get('signToken') || hashParams.get('signature') || ''
+        if (!targetAid) {
+          const aid = hashParams.get('actId') || hashParams.get('activityId') || hashParams.get('id')
+          if (aid) targetAid = Number(aid)
+        }
+      }
     } catch {}
   }
 
+  // 3. 全局高级正则兜底匹配（兼容任意格式中携带的 nonce=... 和 sign=... 或标准防伪字根）
+  if (!nonce) {
+    const nonceParamMatch = text.match(/[?&#\s,]nonce=([^&#\s,]+)/i)
+    if (nonceParamMatch) {
+      nonce = decodeURIComponent(nonceParamMatch[1]).trim()
+    } else {
+      const noncePrefixMatch = text.match(/\b(NONCE_[A-Za-z0-9_]+)\b/i)
+      if (noncePrefixMatch) nonce = noncePrefixMatch[1].trim()
+    }
+  }
+
+  if (!sign) {
+    const signParamMatch = text.match(/[?&#\s,](?:sign|signToken|signature)=([^&#\s,]+)/i)
+    if (signParamMatch) {
+      sign = decodeURIComponent(signParamMatch[1]).trim()
+    } else {
+      const signPrefixMatch = text.match(/\b(SIGN_[A-Za-z0-9_]+)\b/i)
+      if (signPrefixMatch) sign = signPrefixMatch[1].trim()
+    }
+  }
+
+  if (!targetAid) {
+    const actIdMatch = text.match(/[?&#\s,](?:actId|activityId|id)=([^&#\s,]+)/i)
+    if (actIdMatch) targetAid = Number(actIdMatch[1])
+  }
+
+  // 4. 清理首尾可能附带的多余引号与标点
+  if (nonce) nonce = nonce.replace(/^["']|["']$/g, '').trim()
+  if (sign) sign = sign.replace(/^["']|["']$/g, '').trim()
+
   if (!nonce || !sign) {
+    console.error('扫码内容未提取到 nonce 或 sign:', text)
     throw new Error('未识别到有效的 nonce 或 sign 防伪签名')
   }
 

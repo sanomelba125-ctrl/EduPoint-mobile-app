@@ -32,6 +32,16 @@ const camerasList = ref<{ id: string; label: string }[]>([])
 const currentCameraIndex = ref(0)
 const flashActive = ref(false)
 
+// 微信小程序原生相机方向：'front'（前置） | 'back'（后置）
+const currentDevicePosition = ref<'front' | 'back'>(props.preferFront ? 'front' : 'back')
+
+watch(
+  () => props.preferFront,
+  (newVal) => {
+    currentDevicePosition.value = newVal ? 'front' : 'back'
+  }
+)
+
 let activeStream: MediaStream | null = null
 let scanTimer: any = null
 let nativeVideoEl: HTMLVideoElement | null = null
@@ -40,6 +50,7 @@ let canvasCtx: CanvasRenderingContext2D | null = null
 let barcodeDetector: any = null
 let isStartingCamera = false
 
+// #ifdef H5
 if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
   try {
     barcodeDetector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
@@ -47,13 +58,23 @@ if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
     barcodeDetector = null
   }
 }
+// #endif
 
 const activeCameraLabel = computed(() => {
+  // #ifdef MP-WEIXIN
+  return currentDevicePosition.value === 'front' ? '前置摄像头 (PC/真机)' : '后置摄像头'
+  // #endif
+  // #ifdef H5
   if (camerasList.value.length === 0) return ''
   const cur = camerasList.value[currentCameraIndex.value]
   return cur?.label || `镜头 ${currentCameraIndex.value + 1}`
+  // #endif
+  // #ifndef H5 || MP-WEIXIN
+  return '相机已就绪'
+  // #endif
 })
 
+// #ifdef H5
 const ensureNativeVideo = (): HTMLVideoElement | null => {
   if (nativeVideoEl && nativeVideoEl.parentElement) {
     return nativeVideoEl
@@ -76,20 +97,68 @@ const ensureNativeVideo = (): HTMLVideoElement | null => {
   nativeVideoEl = v
   return v
 }
+// #endif
 
+/**
+ * 启动相机流程（跨端：H5 WebRTC + MP-WEIXIN 原生组件授权）
+ */
 const startCamera = async () => {
-  // #ifdef H5
-  if (typeof window === 'undefined') return
   if (isStartingCamera) return
   isStartingCamera = true
   cameraLoading.value = true
   cameraError.value = ''
 
+  // 1. 微信小程序平台 (MP-WEIXIN)
+  // #ifdef MP-WEIXIN
+  try {
+    const setting = await uni.getSetting()
+    const auth = setting?.authSetting?.['scope.camera']
+    if (auth === false) {
+      const modal = await uni.showModal({
+        title: '需要相机权限',
+        content: '现场扫码打卡需要使用摄像头权限，请在权限设置中允许开启。',
+        confirmText: '去设置',
+        cancelText: '取消'
+      })
+      if (modal.confirm) {
+        const openRes = await uni.openSetting()
+        if (openRes.authSetting?.['scope.camera']) {
+          cameraActive.value = true
+          cameraLoading.value = false
+          emit('cameraReady', null)
+          return
+        }
+      }
+      cameraError.value = '摄像头权限未开启，无法使用扫码'
+      cameraLoading.value = false
+      emit('error', cameraError.value)
+      return
+    }
+
+    cameraActive.value = true
+  } catch (err: any) {
+    console.error('小程序相机初始化异常:', err)
+    cameraError.value = err?.errMsg || err?.message || '相机启动受阻'
+    cameraActive.value = false
+    cameraLoading.value = false
+    emit('error', cameraError.value)
+  } finally {
+    isStartingCamera = false
+  }
+  // #endif
+
+  // 2. H5 / PC 浏览器平台
+  // #ifdef H5
+  if (typeof window === 'undefined') {
+    isStartingCamera = false
+    return
+  }
+
   try {
     await stopCamera()
     await nextTick()
 
-    // 1. 枚举设备，优先识别 PC 前置内置摄像头
+    // 枚举硬件设备，优先识别 PC 前置内置摄像头
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
@@ -120,14 +189,12 @@ const startCamera = async () => {
         exact: camerasList.value[currentCameraIndex.value].id
       }
     } else {
-      // 默认优先调用 PC 前置摄像头 ('user')
       (constraints.video as MediaTrackConstraints).facingMode = props.preferFront ? 'user' : { ideal: 'environment' }
     }
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints)
     activeStream = stream
 
-    // 再次刷新已授权的硬件真实标签
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoDevs = devices
@@ -175,6 +242,9 @@ const startCamera = async () => {
   // #endif
 }
 
+/**
+ * 停止相机硬件流
+ */
 const stopCamera = async () => {
   // #ifdef H5
   if (scanTimer) {
@@ -191,14 +261,18 @@ const stopCamera = async () => {
     try { nativeVideoEl.pause() } catch (e) {}
     nativeVideoEl.srcObject = null
   }
+  // #endif
+
   cameraActive.value = false
   cameraLoading.value = false
   flashActive.value = false
-  // #endif
 }
 
+/**
+ * H5 帧扫描检测循环
+ */
+// #ifdef H5
 const startScanLoop = () => {
-  // #ifdef H5
   if (scanTimer) clearInterval(scanTimer)
 
   scanTimer = setInterval(async () => {
@@ -245,10 +319,51 @@ const startScanLoop = () => {
       }
     } catch (e) {}
   }, props.scanInterval)
-  // #endif
+}
+// #endif
+
+/**
+ * 微信小程序原生 camera 组件扫码与生命周期事件
+ */
+// #ifdef MP-WEIXIN
+const onWxScanCode = (e: any) => {
+  if (props.scanLocked) return
+  const result = e.detail?.result
+  if (result) {
+    emit('scan', result)
+  }
 }
 
+const onWxCameraError = (e: any) => {
+  console.error('小程序 camera 组件报错:', e)
+  const msg = e.detail?.errMsg || '相机启动失败，请检查摄像头是否被占用或滑盖未开'
+  cameraError.value = msg
+  cameraLoading.value = false
+  cameraActive.value = false
+  emit('error', msg)
+}
+
+const onWxCameraInitDone = (e: any) => {
+  cameraLoading.value = false
+  cameraActive.value = true
+  cameraError.value = ''
+  emit('cameraReady', e.detail)
+}
+// #endif
+
+/**
+ * 切换前置/后置摄像头
+ */
 const switchCamera = async () => {
+  // #ifdef MP-WEIXIN
+  currentDevicePosition.value = currentDevicePosition.value === 'front' ? 'back' : 'front'
+  uni.showToast({
+    title: `已切换至：${currentDevicePosition.value === 'front' ? '前置镜头' : '后置镜头'}`,
+    icon: 'none'
+  })
+  // #endif
+
+  // #ifdef H5
   if (camerasList.value.length <= 1) {
     uni.showToast({ title: '当前仅检测到一个可用摄像头', icon: 'none' })
     return
@@ -260,8 +375,12 @@ const switchCamera = async () => {
     icon: 'none'
   })
   await startCamera()
+  // #endif
 }
 
+/**
+ * 切换补光灯
+ */
 const toggleTorch = async () => {
   // #ifdef H5
   if (activeStream && cameraActive.value) {
@@ -287,10 +406,18 @@ const toggleTorch = async () => {
     }
   }
   // #endif
+
   flashActive.value = !flashActive.value
   emit('torchChange', flashActive.value)
+  uni.showToast({
+    title: flashActive.value ? '补光灯已开启' : '补光灯已关闭',
+    icon: 'none'
+  })
 }
 
+/**
+ * 从相册上传图片扫码识别
+ */
 const triggerFileInput = () => {
   // #ifdef H5
   const inputEl = document.getElementById('xview-file-input') as HTMLInputElement
@@ -299,11 +426,29 @@ const triggerFileInput = () => {
     inputEl.click()
   }
   // #endif
-  // #ifndef H5
+
+  // #ifdef MP-WEIXIN
+  uni.scanCode({
+    onlyFromCamera: false,
+    scanType: ['qrCode'],
+    success: (scanRes) => {
+      if (scanRes.result) {
+        emit('scan', scanRes.result)
+      }
+    },
+    fail: (err) => {
+      if (!err?.errMsg?.includes('cancel')) {
+        uni.showToast({ title: '未能识别二维码', icon: 'none' })
+      }
+    }
+  })
+  // #endif
+
+  // #ifndef H5 || MP-WEIXIN
   uni.chooseImage({
     count: 1,
     sourceType: ['album'],
-    success: (res) => {
+    success: () => {
       uni.scanCode({
         onlyFromCamera: false,
         scanType: ['qrCode'],
@@ -316,8 +461,8 @@ const triggerFileInput = () => {
   // #endif
 }
 
+// #ifdef H5
 const handleFileChange = async (event: Event) => {
-  // #ifdef H5
   const target = event.target as HTMLInputElement
   if (!target.files || target.files.length === 0) return
   const file = target.files[0]
@@ -371,8 +516,8 @@ const handleFileChange = async (event: Event) => {
     uni.hideLoading()
     uni.showToast({ title: '图片读取失败，请检查文件格式', icon: 'none' })
   }
-  // #endif
 }
+// #endif
 
 onMounted(() => {
   if (props.autoStart) {
@@ -397,11 +542,27 @@ defineExpose({
   <view class="xview-viewer-root">
     <!-- 取景视口 -->
     <view class="xview-viewfinder">
-      <!-- 原生视频流容器 -->
+      <!-- 1. H5 原生视频流容器 -->
       <!-- #ifdef H5 -->
       <div id="xviewCameraContainer" class="xview-video-container"></div>
       <!-- #endif -->
-      <!-- #ifndef H5 -->
+
+      <!-- 2. 微信小程序原生 camera 组件（支持 PC 开发者工具前置摄像头调用与原生扫码） -->
+      <!-- #ifdef MP-WEIXIN -->
+      <camera
+        v-if="cameraActive"
+        class="xview-native-camera-elem"
+        :device-position="currentDevicePosition"
+        flash="off"
+        mode="scanCode"
+        @scancode="onWxScanCode"
+        @error="onWxCameraError"
+        @initdone="onWxCameraInitDone"
+      />
+      <!-- #endif -->
+
+      <!-- 3. 其他平台兜底容器 -->
+      <!-- #ifndef H5 || MP-WEIXIN -->
       <view class="xview-video-container"></view>
       <!-- #endif -->
 
@@ -438,7 +599,7 @@ defineExpose({
     <view class="xview-control-bar">
       <view class="xview-status-pill" :class="{ online: cameraActive }">
         <view class="xview-dot"></view>
-        <text class="xview-status-label">{{ cameraActive ? (activeCameraLabel || '前置摄像头取景中') : '摄像头已停止' }}</text>
+        <text class="xview-status-label">{{ cameraActive ? (activeCameraLabel || '摄像头取景中') : '摄像头已停止' }}</text>
       </view>
       <view class="xview-action-group">
         <button v-if="cameraActive" class="xview-action-btn" @click="stopCamera">
@@ -449,15 +610,28 @@ defineExpose({
           <svg class="xview-btn-icon" viewBox="0 0 24 24"><path d="M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9Z"/></svg>
           <text>启动</text>
         </button>
+
+        <!-- 切换镜头：微信小程序支持直接切换前后置，H5 支持多设备切换 -->
+        <!-- #ifdef MP-WEIXIN -->
+        <button class="xview-action-btn" @click="switchCamera">
+          <svg class="xview-btn-icon" viewBox="0 0 24 24"><path d="M12,4V1L8,5L12,9V6C15.31,6 18,8.69 18,12C18,13.04 17.74,14.03 17.27,14.89L18.73,16.35C19.53,15.08 20,13.6 20,12A8,8 0 0,0 12,4M6.73,7.65C5.93,8.92 5.5,10.4 5.5,12A8,8 0 0,0 13.5,20V23L17.5,19L13.5,15V18C10.19,18 7.5,15.31 7.5,12C7.5,10.96 7.76,9.97 8.23,9.11L6.73,7.65Z"/></svg>
+          <text>切镜头</text>
+        </button>
+        <!-- #endif -->
+        <!-- #ifndef MP-WEIXIN -->
         <button v-if="camerasList.length > 1" class="xview-action-btn" @click="switchCamera">
           <svg class="xview-btn-icon" viewBox="0 0 24 24"><path d="M12,4V1L8,5L12,9V6C15.31,6 18,8.69 18,12C18,13.04 17.74,14.03 17.27,14.89L18.73,16.35C19.53,15.08 20,13.6 20,12A8,8 0 0,0 12,4M6.73,7.65C5.93,8.92 5.5,10.4 5.5,12A8,8 0 0,0 13.5,20V23L17.5,19L13.5,15V18C10.19,18 7.5,15.31 7.5,12C7.5,10.96 7.76,9.97 8.23,9.11L6.73,7.65Z"/></svg>
           <text>切镜头</text>
         </button>
+        <!-- #endif -->
+
         <button class="xview-action-btn" @click="triggerFileInput">
           <svg class="xview-btn-icon" viewBox="0 0 24 24"><path d="M19,19H5V5H19M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M13.96,12.29L11.21,15.83L9.25,13.47L6.5,17H17.5L13.96,12.29Z"/></svg>
           <text>传图识别</text>
         </button>
       </view>
+
+      <!-- H5 隐藏的文件选择输入控件 -->
       <!-- #ifdef H5 -->
       <input
         id="xview-file-input"
@@ -504,6 +678,13 @@ defineExpose({
   object-fit: cover !important;
   display: block !important;
   background-color: #020617 !important;
+}
+
+/* 微信小程序原生 camera 组件填满取景器 */
+.xview-native-camera-elem {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
 }
 
 .xview-overlay {
