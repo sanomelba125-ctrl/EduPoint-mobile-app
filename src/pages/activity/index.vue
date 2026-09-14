@@ -10,6 +10,7 @@ import {
   type ActivityStatusInfo
 } from '@/api/activity'
 import { getApiErrorMessage } from '@/utils/request'
+import { getUnreadNoticeCountApi } from '@/api/notice'
 
 // 5 大活动分类
 const CATEGORIES = [
@@ -94,6 +95,29 @@ const goToMyRecords = () => {
   })
 }
 
+const goToAiChat = () => {
+  uni.navigateTo({
+    url: '/pages/ai-chat/index'
+  })
+}
+
+const unreadNoticeCount = ref(0)
+
+const fetchUnreadNoticeCount = async () => {
+  try {
+    const count = await getUnreadNoticeCountApi()
+    unreadNoticeCount.value = count || 0
+  } catch (err) {
+    // 忽略异常
+  }
+}
+
+const goToNotices = () => {
+  uni.navigateTo({
+    url: '/pages/notice/index'
+  })
+}
+
 // 主页直接取消报名/退出候补
 const handleCancelSignup = (act: ActivityItem) => {
   const isWait = act.myEnrollmentStatus === 'WAITLIST'
@@ -171,14 +195,17 @@ const handleCardAction = (act: ActivityItem, info: ActivityStatusInfo) => {
 
 onPullDownRefresh(() => {
   fetchActivities()
+  fetchUnreadNoticeCount()
 })
 
 onShow(() => {
   fetchActivities()
+  fetchUnreadNoticeCount()
 })
 
 onMounted(() => {
   fetchActivities()
+  fetchUnreadNoticeCount()
 })
 </script>
 
@@ -201,6 +228,16 @@ onMounted(() => {
           <svg class="icon-svg" viewBox="0 0 24 24">
             <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>
           </svg>
+        </view>
+      </view>
+
+      <!-- 消息通知快捷铃铛入口 -->
+      <view class="notice-quick-btn" @click="goToNotices">
+        <svg class="icon-svg bell-svg" viewBox="0 0 24 24">
+          <path d="M12 22C13.1 22 14 21.1 14 20H10C10 21.1 10.9 22 12 22M18 16V11C18 7.93 16.37 5.36 13.5 4.68V4C13.5 3.17 12.83 2.5 12 2.5C11.17 2.5 10.5 3.17 10.5 4V4.68C7.64 5.36 6 7.92 6 11V16L4 18V19H20V18L18 16Z"/>
+        </svg>
+        <view v-if="unreadNoticeCount > 0" class="bell-badge">
+          {{ unreadNoticeCount > 99 ? '99+' : unreadNoticeCount }}
         </view>
       </view>
 
@@ -320,6 +357,13 @@ onMounted(() => {
         </svg>
         <text class="empty-text">暂无符合条件的校园活动</text>
       </view>
+    </view>
+
+    <!-- 全局悬浮 AI 智能客服入口 -->
+    <view class="floating-ai-btn" @click="goToAiChat">
+      <view class="ai-pulse-ring"></view>
+      <text class="ai-btn-icon">🤖</text>
+      <text class="ai-btn-label">AI客服</text>
     </view>
   </view>
 </template>
@@ -707,5 +751,103 @@ onMounted(() => {
 .empty-text {
   font-size: 26rpx;
   color: #909399;
+}
+
+/* 悬浮 AI 智能客服入口 */
+.floating-ai-btn {
+  position: fixed;
+  right: 32rpx;
+  bottom: 140rpx;
+  z-index: 99;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  box-shadow: 0 8rpx 28rpx rgba(37, 99, 235, 0.45);
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.floating-ai-btn:active {
+  transform: scale(0.92);
+}
+
+.ai-pulse-ring {
+  position: absolute;
+  top: -6rpx;
+  left: -6rpx;
+  right: -6rpx;
+  bottom: -6rpx;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 130, 246, 0.5);
+  animation: aiRingPulse 2.4s infinite ease-out;
+  pointer-events: none;
+}
+
+@keyframes aiRingPulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  70% { transform: scale(1.28); opacity: 0; }
+  100% { transform: scale(1.28); opacity: 0; }
+}
+
+.ai-btn-icon {
+  font-size: 38rpx;
+  line-height: 1;
+}
+
+.ai-btn-label {
+  font-size: 18rpx;
+  font-weight: 700;
+  color: #ffffff;
+  margin-top: 2rpx;
+  letter-spacing: 0.5rpx;
+}
+
+/* 顶部消息通知铃铛按钮 */
+.notice-quick-btn {
+  position: relative;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 18rpx;
+  background-color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 14rpx;
+  transition: all 0.2s ease;
+}
+
+.notice-quick-btn:active {
+  transform: scale(0.92);
+  background-color: #e2e8f0;
+}
+
+.bell-svg {
+  width: 38rpx;
+  height: 38rpx;
+  fill: #475569;
+}
+
+.bell-badge {
+  position: absolute;
+  top: -6rpx;
+  right: -6rpx;
+  min-width: 28rpx;
+  height: 28rpx;
+  line-height: 28rpx;
+  padding: 0 6rpx;
+  background-color: #ef4444;
+  color: #ffffff;
+  font-size: 18rpx;
+  font-weight: 700;
+  border-radius: 14rpx;
+  text-align: center;
+  border: 2rpx solid #ffffff;
+  box-shadow: 0 2rpx 8rpx rgba(239, 68, 68, 0.4);
 }
 </style>

@@ -6,6 +6,7 @@ import { storeToRefs } from 'pinia'
 import {
   getGiftDetailApi,
   exchangeGiftApi,
+  generateExchangeRequestId,
   type GiftItem,
   type GiftExchangeResult
 } from '@/api/gift'
@@ -18,6 +19,13 @@ const loading = ref(false)
 const gift = ref<GiftItem | null>(null)
 const quantity = ref(1)
 const submitting = ref(false)
+
+/**
+ * 本次兑换意图的幂等标识：
+ * 进入页面时生成一次，提交失败（含弱网中断后重试）复用同一个标识，避免服务端重复落单；
+ * 兑换成功后重置，下一次兑换视为新的意图。
+ */
+const requestId = ref<string>(generateExchangeRequestId())
 
 // 提货核验信息（默认带入学籍档案资料，亦支持编辑）
 const receiverName = ref(userInfo.value.name || '张晓明')
@@ -111,12 +119,16 @@ const handleExchange = async () => {
       submitting.value = true
       try {
         const result = await exchangeGiftApi({
+          requestId: requestId.value,
           giftId: gift.value!.id,
           quantity: quantity.value,
           receiverName: finalName,
           receiverPhone: finalPhone,
           receiverAddress: finalAddress
         })
+
+        // 本次兑换意图已完成，重置幂等标识，下一次兑换使用新标识
+        requestId.value = generateExchangeRequestId()
 
         // 核心亮点：全局更新 Pinia 中的用户可用积分
         userStore.updatePoints(-totalCost.value)

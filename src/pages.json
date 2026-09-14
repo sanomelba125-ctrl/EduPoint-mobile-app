@@ -82,6 +82,13 @@
       }
     },
     {
+      "path": "pages/notice/index",
+      "style": {
+        "navigationBarTitleText": "消息通知中心",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
       "path": "pages/my/notices",
       "style": {
         "navigationBarTitleText": "消息通知中心",
@@ -102,6 +109,17 @@
         "navigationBarTitleText": "电子荣誉证书真伪核验",
         "navigationBarBackgroundColor": "#ffffff",
         "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/ai-chat/index",
+      "style": {
+        "navigationBarTitleText": "AI 智能客服",
+        "navigationBarBackgroundColor": "#0f172a",
+        "navigationBarTextStyle": "white",
+        "app-plus": {
+          "softinputMode": "adjustResize"
+        }
       }
     }
   ],
