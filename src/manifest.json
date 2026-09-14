@@ -8,7 +8,23 @@
   "app-plus": {
     "usingComponents": true,
     "nvueCompiler": "uni-app",
-    "compilerVersion": 3
+    "compilerVersion": 3,
+    "modules": {
+      "Geolocation": {}
+    },
+    "distribute": {
+      "android": {
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\"/>"
+        ]
+      },
+      "ios": {
+        "privacyDescription": {
+          "NSLocationWhenInUseUsageDescription": "用于活动地图导航、距离计算和现场打卡范围核验"
+        }
+      }
+    }
   },
   "quickapp": {},
   "mp-weixin": {
@@ -16,7 +32,15 @@
     "setting": {
       "urlCheck": false
     },
-    "usingComponents": true
+    "usingComponents": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于活动地图导航、距离计算和现场打卡范围核验"
+      }
+    },
+    "requiredPrivateInfos": [
+      "getLocation"
+    ]
   },
   "mp-alipay": {
     "usingComponents": true

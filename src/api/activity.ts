@@ -54,8 +54,8 @@ export interface CheckinParams {
   activityId: number
   nonce: string
   sign: string
-  checkinLatitude: number
-  checkinLongitude: number
+  checkinLatitude?: number
+  checkinLongitude?: number
 }
 
 export interface CheckinResult {
@@ -172,41 +172,13 @@ export async function getActivityPageApi(query?: ActivityPageQuery): Promise<Pag
 
 /**
  * 2.2 查询活动详情 (GET /activity/{id})
+ * 纯净轻量详情请求，杜绝无意义的分页列表全量拉取；后端已自动注入当前登录学生的报名状态(myEnrollmentStatus)与排位序号(myQueueNumber)
  */
 export async function getActivityDetailApi(id: number): Promise<ActivityItem> {
   const res = await request<ActivityItem>({
     url: `/activity/${id}`,
     method: 'GET'
   })
-
-  let myStatus: 'NONE' | 'ENROLLED' | 'WAITLIST' | 'COMPLETED' = 'NONE'
-  let qNum: number | null = null
-  const token = uni.getStorageSync('student_token')
-
-  if (token) {
-    try {
-      const myRes = await request<PageResult<any>>({
-        url: '/student/activity/my-list',
-        method: 'GET',
-        data: { page: 1, size: 100 }
-      })
-      if (myRes && myRes.records) {
-        const found = myRes.records.find(
-          (r: any) => r.activityId === Number(id) && (r.status === 1 || r.status === 2 || r.status === 4)
-        )
-        if (found) {
-          if (found.status === 1) myStatus = 'ENROLLED'
-          else if (found.status === 2) myStatus = 'COMPLETED'
-          else if (found.status === 4) {
-            myStatus = 'WAITLIST'
-            qNum = found.queueNumber || 1
-          }
-        }
-      }
-    } catch {
-      // 忽略
-    }
-  }
 
   const rawCount = (res as any).participantCount !== undefined ? (res as any).participantCount : res.enrolledCount
   const enrolled = rawCount !== undefined && rawCount !== null ? Number(rawCount) : 0
@@ -215,8 +187,8 @@ export async function getActivityDetailApi(id: number): Promise<ActivityItem> {
     ...res,
     enrolledCount: enrolled,
     participantCount: enrolled,
-    myEnrollmentStatus: res.myEnrollmentStatus || myStatus,
-    myQueueNumber: res.myQueueNumber || qNum
+    myEnrollmentStatus: res.myEnrollmentStatus || 'NONE',
+    myQueueNumber: res.myQueueNumber || null
   }
 }
 
@@ -332,4 +304,3 @@ export async function getActivityQrCodeApi(activityId: number): Promise<QrCodeVO
     method: 'GET'
   })
 }
-
