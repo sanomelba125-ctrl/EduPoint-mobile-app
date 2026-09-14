@@ -9,14 +9,10 @@ const studentNo = ref('')
 const password = ref('')
 const loading = ref(false)
 
-// 一键填入演示学生账号 (支持榜首与测试账号)
+// 一键填入系统内置学生账号 (提供预置测试账号快捷填充)
 const fillStudent = (no: string, pwd = '123456') => {
   studentNo.value = no
   password.value = pwd
-}
-
-const prefillTestStudent = () => {
-  fillStudent('2023010401', '123456')
 }
 
 // 登录提交
@@ -40,57 +36,27 @@ const handleLogin = async () => {
       password: pwd
     })
 
-    if (res && res.token) {
-      userStore.setToken(res.token)
-      const profile = res.userInfo || res.student || res.studentInfo || {
-        id: 6,
-        studentNo: no,
-        name: no === '2023010401' ? '张晓明' : '张伟',
-        phone: no === '2023010401' ? '13911110006' : '13800000001',
-        avatar: '',
-        currentPoints: no === '2023010401' ? 350 : 180,
-        totalPoints: no === '2023010401' ? 420 : 320,
-        college: '信息工程学院',
-        className: no === '2023010401' ? '软工2301班' : '计科2201班'
-      }
+    if (!res?.token) {
+      uni.showToast({ title: '登录失败：服务端未返回有效令牌', icon: 'none' })
+      return
+    }
+
+    userStore.setToken(res.token)
+    const profile = res.userInfo || res.student || res.studentInfo
+    if (profile) {
       userStore.setUserInfo(profile)
-      uni.showToast({ title: '学籍认证成功', icon: 'success' })
-      setTimeout(() => {
-        uni.switchTab({ url: '/pages/activity/index' })
-      }, 600)
     }
+    uni.showToast({ title: '学籍认证成功', icon: 'success' })
+    setTimeout(() => {
+      uni.switchTab({ url: '/pages/activity/index' })
+    }, 600)
   } catch (err: any) {
-    console.warn('后端登录请求异常或网络未就绪，进行演示逻辑匹配:', err)
-    // 离线容灾 / 演示匹配
-    if (no === '2022050109') {
-      uni.showModal({
-        title: '学籍认证拦截',
-        content: '该账号已被系统冻结（存在代刷卡异常记录），请携带证件前往学工处核验！',
-        showCancel: false
-      })
-    } else if ((no === '2023010401' || no === '20220101') && (pwd === '123456' || pwd === 'admin123')) {
-      userStore.setToken('token_stu_mock_' + Date.now())
-      userStore.setUserInfo({
-        id: no === '2023010401' ? 6 : 1,
-        studentNo: no,
-        name: no === '2023010401' ? '张晓明' : '张伟',
-        phone: no === '2023010401' ? '13911110006' : '13800000001',
-        avatar: '',
-        currentPoints: no === '2023010401' ? 350 : 180,
-        totalPoints: no === '2023010401' ? 420 : 320,
-        college: '信息工程学院',
-        className: no === '2023010401' ? '软工2301班' : '计科2201班'
-      })
-      uni.showToast({ title: '已安全认证进入', icon: 'success' })
-      setTimeout(() => {
-        uni.switchTab({ url: '/pages/activity/index' })
-      }, 600)
-    } else {
-      uni.showToast({
-        title: err?.message || '认证失败：学号或密码错误',
-        icon: 'none'
-      })
-    }
+    // 真实展示后端返回的业务错误信息（如密码错误、账号已被冻结等），严禁伪造登录态与假Token
+    const errorMsg = err?.message || '认证失败：学号或密码错误'
+    uni.showToast({
+      title: errorMsg,
+      icon: 'none'
+    })
   } finally {
     loading.value = false
   }

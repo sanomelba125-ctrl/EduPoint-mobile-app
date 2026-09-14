@@ -1,5 +1,42 @@
+import { useUserStore } from '@/stores/user'
+
 // 跨端通用请求封装 (微信小程序 / H5 / App)
 const BASE_URL = 'http://localhost:8080/api' // 本地开发后端接口地址
+
+let isHandling401 = false
+
+/**
+ * 统一处理 401 登录失效：
+ * 1. 一次性调用 userStore.logout()，安全关闭 WebSocket 连接并重置 Pinia 状态
+ * 2. 清除正确的本地缓存键名 student_token 与 student_info（防止信息残留）
+ * 3. 防抖跳转登录页
+ */
+export function handleUnauthorized(message?: string) {
+  try {
+    const userStore = useUserStore()
+    userStore.logout()
+  } catch {
+    // 降级兜底：清除正确的本地存储键名
+    uni.removeStorageSync('student_token')
+    uni.removeStorageSync('student_info')
+  }
+
+  if (!isHandling401) {
+    isHandling401 = true
+    uni.showToast({
+      title: message || '登录已过期，请重新登录',
+      icon: 'none'
+    })
+    setTimeout(() => {
+      uni.reLaunch({
+        url: '/pages/login/index',
+        complete: () => {
+          isHandling401 = false
+        }
+      })
+    }, 400)
+  }
+}
 
 export interface ApiError extends Error {
   code?: number
@@ -57,9 +94,7 @@ export const request = <T = any>(options: RequestOptions): Promise<T> => {
           const errorCode = body?.code !== undefined ? body.code : -1
 
           if (errorCode === 401) {
-            uni.removeStorageSync('student_token')
-            uni.removeStorageSync('student_user_info')
-            uni.reLaunch({ url: '/pages/login/index' })
+            handleUnauthorized(errorMsg)
           }
 
           const apiError = new ApiErrorImpl(errorMsg, errorCode, 200)
@@ -70,10 +105,14 @@ export const request = <T = any>(options: RequestOptions): Promise<T> => {
           return
         }
 
-        // 2. HTTP 状态码非 200 (如 404 / 500 / 502)
+        // 2. HTTP 状态码非 200 (如 401 / 404 / 500 / 502)
         const errorMsg = res.data?.message || `网络异常: ${res.statusCode}`
         const errorCode = res.data?.code !== undefined ? res.data.code : res.statusCode
         const apiError = new ApiErrorImpl(errorMsg, errorCode, res.statusCode)
+
+        if (res.statusCode === 401 || errorCode === 401) {
+          handleUnauthorized(errorMsg)
+        }
 
         if (options.showToast) {
           uni.showToast({ title: errorMsg, icon: 'none' })
