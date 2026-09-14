@@ -19,7 +19,7 @@ const unreadCount = ref(0)
 const loading = ref(false)
 const refreshing = ref(false)
 const page = ref(1)
-const pageSize = 15
+const pageSize = 30
 const hasMore = ref(true)
 
 // 当前选中的详情弹窗通知
@@ -66,7 +66,7 @@ const filteredNoticeList = computed(() => {
   return noticeList.value
 })
 
-// 分页拉取通知列表
+// 分页拉取通知列表（拉取全量后由 computed 根据当前选中的 Tab 做分类与未读过滤，避免切换标签时数据被冲掉）
 const fetchNotices = async (reset = false) => {
   if (reset) {
     page.value = 1
@@ -76,12 +76,9 @@ const fetchNotices = async (reset = false) => {
 
   loading.value = true
   try {
-    // 仅在未读标签时向后端传 isRead=0 节约带宽，其余标签拉取全量后在前端做多维过滤
-    const isReadParam = activeTab.value === 'unread' ? 0 : undefined
     const res = await getMyNoticesApi({
       page: page.value,
-      size: pageSize,
-      isRead: isReadParam
+      size: pageSize
     })
 
     const records = res?.records || []
@@ -107,13 +104,10 @@ const fetchNotices = async (reset = false) => {
   }
 }
 
-// 切换标签栏
+// 切换标签栏（响应式即时切换，不破坏已加载的通知列表缓存）
 const switchTab = (tab: TabType) => {
   if (activeTab.value === tab) return
   activeTab.value = tab
-  if (tab === 'unread') {
-    fetchNotices(true)
-  }
 }
 
 // 单条通知点击查看详情并标记已读

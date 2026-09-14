@@ -368,6 +368,7 @@ onUnmounted(() => {
             <view class="msg-source-tag" v-if="msg.role === 'assistant' && msg.source">
               <text v-if="msg.source === 'KNOWLEDGE_BASE'" class="source-pill kb">官方权威解答</text>
               <text v-else-if="msg.source === 'LOCAL_SYNTHESIS'" class="source-pill synth">个人业务实时核对</text>
+              <text v-else-if="msg.source === 'SENSENOVA'" class="source-pill ai">商汤 SenseNova</text>
               <text v-else class="source-pill ai">AI 智能推理</text>
             </view>
 

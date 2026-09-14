@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
-import { getStudentProfileApi, updateStudentProfileApi } from '@/api/auth'
+import { getStudentProfileApi, updateStudentProfileApi, changeStudentPasswordApi } from '@/api/auth'
 import { getMyOrdersApi } from '@/api/gift'
 import { getUnreadNoticeCountApi } from '@/api/notice'
 
@@ -126,14 +126,71 @@ const handleSaveProfile = async () => {
   }
 }
 
-// 安全说明弹窗
-const showSecurityNotice = () => {
-  uni.showModal({
-    title: '安全认证与令牌隔离说明',
-    content: '当前学生端采用独立专属 Student Token 与后端微服务交互，与管理员端物理隔离，保障学籍档案、学分资产与兑换隐私绝对安全。',
-    showCancel: false,
-    confirmText: '我知道了'
-  })
+// 修改登录密码弹窗状态与表单
+const showPasswordModal = ref(false)
+const changingPassword = ref(false)
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+
+const openPasswordModal = () => {
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  showPasswordModal.value = true
+}
+
+const closePasswordModal = () => {
+  if (changingPassword.value) return
+  showPasswordModal.value = false
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+}
+
+const handlePasswordSubmit = async () => {
+  const oldPwd = oldPassword.value.trim()
+  const newPwd = newPassword.value.trim()
+  const confirmPwd = confirmPassword.value.trim()
+
+  if (!oldPwd) {
+    uni.showToast({ title: '请输入原登录密码', icon: 'none' })
+    return
+  }
+  if (!newPwd) {
+    uni.showToast({ title: '请输入新密码', icon: 'none' })
+    return
+  }
+  if (newPwd.length < 6) {
+    uni.showToast({ title: '新密码不能少于6位', icon: 'none' })
+    return
+  }
+  if (newPwd === oldPwd) {
+    uni.showToast({ title: '新密码不能与原密码相同', icon: 'none' })
+    return
+  }
+  if (newPwd !== confirmPwd) {
+    uni.showToast({ title: '两次新密码输入不一致', icon: 'none' })
+    return
+  }
+
+  changingPassword.value = true
+  try {
+    await changeStudentPasswordApi({
+      oldPassword: oldPwd,
+      newPassword: newPwd,
+      confirmPassword: confirmPwd
+    })
+    uni.showToast({ title: '密码修改成功，请牢记', icon: 'success' })
+    showPasswordModal.value = false
+    oldPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+  } catch (err: any) {
+    uni.showToast({ title: err.message || '修改失败，请重试', icon: 'none' })
+  } finally {
+    changingPassword.value = false
+  }
 }
 
 // 退出登录
@@ -337,15 +394,15 @@ const navTo = (url: string) => {
         </view>
       </view>
 
-      <view class="cell-menu-item" @click="showSecurityNotice">
+      <view class="cell-menu-item" @click="openPasswordModal">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M12,11.99H19C18.47,16.11 15.72,19.78 12,20.93V12H5V6.3L12,3.19V11.99Z"/>
+          <svg class="cell-svg" viewBox="0 0 24 24" style="fill: #f59e0b;">
+            <path d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.89,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/>
           </svg>
-          <text class="cell-title">安全认证与令牌隔离</text>
+          <text class="cell-title">修改登录密码</text>
         </view>
         <view class="cell-right-part">
-          <text class="cell-sub-success">已受保护 &gt;</text>
+          <text class="cell-sub-warning">去修改 &gt;</text>
         </view>
       </view>
     </view>
@@ -426,6 +483,68 @@ const navTo = (url: string) => {
             @click="handleSaveProfile"
           >
             保存修改
+          </button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 修改登录密码模态弹窗 -->
+    <view v-if="showPasswordModal" class="modal-backdrop" @click="closePasswordModal">
+      <view class="modal-card" @click.stop>
+        <view class="modal-header">
+          <text class="modal-title">修改登录密码</text>
+          <text class="modal-close" @click="closePasswordModal">×</text>
+        </view>
+
+        <view class="modal-body">
+          <view class="account-hint-pill">
+            <text class="hint-label">当前学籍账号：</text>
+            <text class="hint-val">{{ userInfo.name || '学生' }} ({{ userInfo.studentNo || '未登录' }})</text>
+          </view>
+
+          <view class="form-item">
+            <text class="form-label">原密码 <text class="required">*</text></text>
+            <input
+              class="form-input"
+              v-model="oldPassword"
+              password
+              placeholder="请输入当前登录密码"
+              maxlength="32"
+            />
+          </view>
+
+          <view class="form-item">
+            <text class="form-label">新密码 <text class="required">*</text></text>
+            <input
+              class="form-input"
+              v-model="newPassword"
+              password
+              placeholder="请输入 6 位及以上新密码"
+              maxlength="32"
+            />
+          </view>
+
+          <view class="form-item">
+            <text class="form-label">确认新密码 <text class="required">*</text></text>
+            <input
+              class="form-input"
+              v-model="confirmPassword"
+              password
+              placeholder="请再次输入新密码"
+              maxlength="32"
+            />
+          </view>
+        </view>
+
+        <view class="modal-footer">
+          <button class="modal-cancel-btn" @click="closePasswordModal">取消</button>
+          <button
+            class="modal-submit-btn"
+            :loading="changingPassword"
+            :disabled="changingPassword"
+            @click="handlePasswordSubmit"
+          >
+            确认修改
           </button>
         </view>
       </view>
@@ -856,6 +975,24 @@ const navTo = (url: string) => {
 .form-val-readonly {
   font-size: 26rpx;
   color: #64748b;
+}
+
+.account-hint-pill {
+  background: #f1f5f9;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 24rpx;
+  font-size: 26rpx;
+  display: flex;
+  align-items: center;
+  border: 1rpx solid #e2e8f0;
+}
+.hint-label {
+  color: #64748b;
+}
+.hint-val {
+  color: #1e293b;
+  font-weight: 600;
 }
 
 .form-input {

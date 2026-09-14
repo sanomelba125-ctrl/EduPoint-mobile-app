@@ -255,7 +255,8 @@ onLoad((query: any) => {
         <view class="notice-list">
           <view class="notice-item">• <text class="item-bold">自提地点：</text>大学生活动中心一楼 102 创客服务台</view>
           <view class="notice-item">• <text class="item-bold">开放时间：</text>周一至周五 09:00 - 17:30</view>
-          <view class="notice-item">• <text class="item-bold">核销流程：</text>兑换成功将生成 8 位专属提货码，由现场管理员扫码核销。</view>
+          <view class="notice-item">• <text class="item-bold">核销流程：</text>兑换成功将生成专属提货码，出示给现场管理员核验核销。</view>
+          <view class="notice-item">• <text class="item-bold">提货时效：</text>提货有效期为 <text class="text-danger item-bold">24 小时（1天）</text>，逾期未提货系统将自动关单并全额原路退还积分。</view>
           <view class="notice-item">• <text class="item-bold">退单政策：</text>核销前可在「我的订单」随时自主取消，积分即时原路退回。</view>
         </view>
       </view>
@@ -297,24 +298,6 @@ onLoad((query: any) => {
 
         <view class="pickup-code-display">
           {{ exchangeResult?.pickupCode || 'PK-8892-01' }}
-        </view>
-
-        <!-- 条形码示意装饰 -->
-        <view class="mock-barcode">
-          <view class="bar w-2"></view>
-          <view class="bar w-4 ml-2"></view>
-          <view class="bar w-1 ml-3"></view>
-          <view class="bar w-3 ml-1"></view>
-          <view class="bar w-2 ml-4"></view>
-          <view class="bar w-5 ml-2"></view>
-          <view class="bar w-2 ml-3"></view>
-          <view class="bar w-4 ml-1"></view>
-          <view class="bar w-1 ml-2"></view>
-          <view class="bar w-3 ml-4"></view>
-          <view class="bar w-2 ml-2"></view>
-          <view class="bar w-4 ml-1"></view>
-          <view class="bar w-2 ml-3"></view>
-          <view class="bar w-5 ml-2"></view>
         </view>
 
         <view class="modal-btns">
@@ -689,35 +672,8 @@ onLoad((query: any) => {
   border: 2rpx dashed #b3d8ff;
   border-radius: 8rpx;
   padding: 20rpx;
-  margin: 28rpx 0 20rpx;
+  margin: 28rpx 0 36rpx;
 }
-
-.mock-barcode {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 64rpx;
-  padding: 12rpx;
-  background: #fafafa;
-  border: 1rpx solid #ebeef5;
-  border-radius: 8rpx;
-  margin-bottom: 32rpx;
-}
-
-.bar {
-  height: 100%;
-  background: #1e293b;
-}
-
-.w-1 { width: 2rpx; }
-.w-2 { width: 4rpx; }
-.w-3 { width: 6rpx; }
-.w-4 { width: 8rpx; }
-.w-5 { width: 10rpx; }
-.ml-1 { margin-left: 2rpx; }
-.ml-2 { margin-left: 4rpx; }
-.ml-3 { margin-left: 6rpx; }
-.ml-4 { margin-left: 8rpx; }
 
 .modal-btns {
   display: flex;

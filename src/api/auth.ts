@@ -62,3 +62,21 @@ export function updateStudentProfileApi(params: StudentUpdateProfileParams): Pro
   })
 }
 
+export interface StudentChangePasswordParams {
+  oldPassword: string
+  newPassword: string
+  confirmPassword: string
+}
+
+/**
+ * 学生自主修改登录密码 (PUT /api/student/change-password)
+ */
+export function changeStudentPasswordApi(params: StudentChangePasswordParams): Promise<void> {
+  return request<void>({
+    url: '/student/change-password',
+    method: 'PUT',
+    data: params
+  })
+}
+
+
