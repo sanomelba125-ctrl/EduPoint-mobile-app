@@ -64,6 +64,7 @@ export interface StudentGiftOrder {
   deliveryTime?: string
   cancelTime?: string
   cancelReason?: string
+  remark?: string
   createTime: string
   giftName?: string
   giftImage?: string

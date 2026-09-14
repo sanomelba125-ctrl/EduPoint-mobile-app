@@ -168,6 +168,18 @@ onMounted(() => {
           </view>
         </view>
 
+        <!-- 履约核销备注或退单原因说明 -->
+        <view v-if="order.status === 2 && order.remark" class="fulfillment-info-box">
+          <text class="info-tag-icon">📝</text>
+          <text class="info-label">签收备注：</text>
+          <text class="info-content">{{ order.remark }}</text>
+        </view>
+        <view v-else-if="order.status === 3 && order.cancelReason" class="fulfillment-info-box cancel">
+          <text class="info-tag-icon">⚠️</text>
+          <text class="info-label">退单原因：</text>
+          <text class="info-content">{{ order.cancelReason }}</text>
+        </view>
+
         <view class="order-card-bottom">
           <view class="code-area">
             <text class="code-label">提货码：</text>
@@ -182,6 +194,11 @@ onMounted(() => {
               <button class="card-btn primary" @click="openCodeModal(order.pickupCode)">
                 出示提货码
               </button>
+            </template>
+            <template v-else-if="order.status === 2">
+              <text class="archived-txt success">
+                已核销提货 {{ order.deliveryTime ? '· ' + order.deliveryTime : '' }}
+              </text>
             </template>
             <template v-else>
               <text class="archived-txt">流水归档完成</text>
@@ -449,6 +466,51 @@ onMounted(() => {
 .archived-txt {
   font-size: 22rpx;
   color: #c0c4cc;
+}
+
+.archived-txt.success {
+  color: #67c23a;
+  font-weight: 500;
+}
+
+.fulfillment-info-box {
+  background: #f0f9eb;
+  border: 1rpx solid #e1f3d8;
+  border-radius: 8rpx;
+  padding: 12rpx 16rpx;
+  margin-bottom: 16rpx;
+  display: flex;
+  align-items: flex-start;
+  gap: 8rpx;
+  font-size: 22rpx;
+}
+
+.fulfillment-info-box.cancel {
+  background: #fef0f0;
+  border-color: #fde2e2;
+}
+
+.fulfillment-info-box .info-tag-icon {
+  font-size: 24rpx;
+  line-height: 1.3;
+}
+
+.fulfillment-info-box .info-label {
+  font-weight: 600;
+  color: #67c23a;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.fulfillment-info-box.cancel .info-label {
+  color: #f56c6c;
+}
+
+.fulfillment-info-box .info-content {
+  color: #606266;
+  flex: 1;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 .empty-box {
