@@ -81,9 +81,10 @@ const goToDetail = (id: number) => {
   })
 }
 
-const goToCheckin = (actId?: number) => {
+const goToCheckin = (actId?: any) => {
+  const validId = typeof actId === 'number' && actId > 0 ? actId : null
   uni.navigateTo({
-    url: actId ? `/pages/activity/checkin?actId=${actId}` : '/pages/activity/checkin'
+    url: validId ? `/pages/activity/checkin?actId=${validId}` : '/pages/activity/checkin'
   })
 }
 
@@ -203,7 +204,7 @@ onMounted(() => {
         </view>
       </view>
 
-      <view class="checkin-quick-btn" @click="goToCheckin">
+      <view class="checkin-quick-btn" @click="goToCheckin()">
         <svg class="icon-svg checkin-svg" viewBox="0 0 24 24">
           <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
         </svg>

@@ -23,7 +23,6 @@ const activityId = ref<number>(1)
 const loading = ref(false)
 const submitting = ref(false)
 const activity = ref<ActivityItem | null>(null)
-let pollTimer: any = null
 
 // 学生定位、测距与导航状态
 const userLocation = ref<AMapLocationResult | null>(null)
@@ -32,15 +31,46 @@ const distanceToActivity = ref<number | null>(null)
 const isNavigating = ref(false)
 const navMapVisible = ref(false)
 const navMapLoading = ref(false)
-const showRouteSteps = ref(false)
-const walkRouteInfo = ref<{
+const navRouteInfo = ref<{
   distance: string
   duration: string
-  steps: Array<{ instruction: string; distance: number }>
+  mode: 'walk' | 'drive' | 'direct'
+  modeName: string
 } | null>(null)
 let mapInstance: any = null
 let myMarkerInstance: any = null
-let watchPositionId: number | null = null
+let endMarkerInstance: any = null
+let fenceCircleInstance: any = null
+let locationRefreshTimer: ReturnType<typeof setInterval> | null = null
+let navigationInitTimer: ReturnType<typeof setTimeout> | null = null
+let walkingRouteInstance: any = null
+let drivingRouteInstance: any = null
+let directLineInstance: any = null
+let routeRequestId = 0
+
+const updateUserMarker = (loc: AMapLocationResult) => {
+  if (!mapInstance || typeof window === 'undefined' || !window.AMap) return
+  const lng = Number(loc.longitude)
+  const lat = Number(loc.latitude)
+  if (!isValidCoordinatePair(lng, lat)) return
+  const position = [lng, lat]
+  const AMap = window.AMap
+
+  if (!myMarkerInstance) {
+    myMarkerInstance = new AMap.Marker({
+      position,
+      title: '我的位置',
+      label: {
+        content: '<div style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;box-shadow:0 2px 6px rgba(16,185,129,0.4);">📍 我的位置</div>',
+        direction: 'top',
+        offset: new AMap.Pixel(0, -4)
+      }
+    })
+    mapInstance.add(myMarkerInstance)
+  } else {
+    myMarkerInstance.setPosition(position)
+  }
+}
 
 /**
  * 刷新/获取用户当前定位并计算距离
@@ -58,15 +88,12 @@ const refreshUserLocation = async (silent = false): Promise<boolean> => {
       activity.value.longitude
     )
     distanceToActivity.value = dist
-    if (!silent) {
-      uni.showToast({ title: '定位已刷新', icon: 'none' })
-    }
-    // 如果地图已打开，刷新路线和定位标记
+    // 如果地图已打开，更新定位标记；仅在首次未生成路线时绘制路线，避免周期刷新触发地图动画跳变
     if (navMapVisible.value && mapInstance) {
-      if (myMarkerInstance) {
-        myMarkerInstance.setPosition([loc.longitude, loc.latitude])
+      updateUserMarker(loc)
+      if (!navRouteInfo.value) {
+        drawNavigationRoute()
       }
-      drawWalkingRoute()
     }
     return true
   } catch (err: any) {
@@ -126,37 +153,49 @@ const toggleNavigation = async () => {
 }
 
 /**
- * 开始导航：展开地图、初始化路线、启动实时定位监听
+ * 开始导航：展开地图、初始化路线、启动实时定位监听（三端兼容且不阻断首次启动）
  */
 const startNavigation = async () => {
   if (!activity.value) return
-  if (!isValidCoordinatePair(activity.value.longitude, activity.value.latitude)) {
+  const actLng = Number(activity.value.longitude)
+  const actLat = Number(activity.value.latitude)
+  if (!isValidCoordinatePair(actLng, actLat)) {
     uni.showToast({ title: '活动尚未配置有效地点坐标', icon: 'none' })
     return
   }
 
   // #ifndef H5
+  isNavigating.value = true
   openAMapNavigation({
-    toLng: activity.value.longitude,
-    toLat: activity.value.latitude,
+    toLng: actLng,
+    toLat: actLat,
     toName: activity.value.locationName || '活动地点',
     toAddress: activity.value.locationAddress,
     mode: 'walk'
   })
-  return
   // #endif
 
-  const located = userLocation.value ? true : await refreshUserLocation(false)
-  if (!located) return
-
+  // #ifdef H5
+  // H5 端：立即启动导航状态并展开地图，不因设备未定位而阻断交互
   isNavigating.value = true
   navMapVisible.value = true
   navMapLoading.value = true
 
   await nextTick()
-  await initNavMap()
-  startLocationTracking()
+  // 延时等待 DOM 展开动画就绪，避免高德地图容器宽高为 0 导致渲染异常
+  navigationInitTimer = setTimeout(async () => {
+    navigationInitTimer = null
+    if (!isNavigating.value || !navMapVisible.value) return
+    await initNavMap()
+    // 启动低频实时定位监听（使用 GCJ-02 真实坐标体系）
+    startLocationTracking()
+    // 若尚未获取定位，静默刷新定位；定位成功后会自动绘制起终点路线
+    if (!userLocation.value) {
+      refreshUserLocation(true)
+    }
+  }, 200)
   uni.showToast({ title: '已开启步行导航', icon: 'none' })
+  // #endif
 }
 
 /**
@@ -165,9 +204,29 @@ const startNavigation = async () => {
 const stopNavigation = () => {
   isNavigating.value = false
   navMapVisible.value = false
+  if (navigationInitTimer !== null) {
+    clearTimeout(navigationInitTimer)
+    navigationInitTimer = null
+  }
   stopLocationTracking()
   destroyMap()
   uni.showToast({ title: '已结束导航', icon: 'none' })
+}
+
+/**
+ * 呼起外部高德官方路线规划或原生 App 导航
+ */
+const openExternalNav = () => {
+  if (!activity.value) return
+  openAMapNavigation({
+    fromLng: userLocation.value?.longitude,
+    fromLat: userLocation.value?.latitude,
+    toLng: Number(activity.value.longitude),
+    toLat: Number(activity.value.latitude),
+    toName: activity.value.locationName || '活动打卡点',
+    toAddress: activity.value.locationAddress,
+    mode: 'walk'
+  })
 }
 
 /**
@@ -176,37 +235,71 @@ const stopNavigation = () => {
 const initNavMap = async () => {
   try {
     const AMap = await loadAMapSDK()
-    const act = activity.value!
+    if (!AMap) return
+
+    // 遵循高德地图 JSAPI 官方规范：在 new AMap.Map 之前注入 appname 埋点标识
+    if (typeof AMap.getConfig === 'function') {
+      AMap.getConfig().appname = 'amap-jsapi-skill'
+    }
+
+    if (mapInstance) {
+      destroyMap()
+    }
+
+    const act = activity.value
+    if (!act) return
+    const actLng = Number(act.longitude)
+    const actLat = Number(act.latitude)
+    if (!isValidCoordinatePair(actLng, actLat)) return
     const user = userLocation.value
 
     // 计算中心点（起终点中心）
-    const centerLng = user ? (user.longitude + act.longitude) / 2 : act.longitude
-    const centerLat = user ? (user.latitude + act.latitude) / 2 : act.latitude
+    const centerLng = user && isValidCoordinatePair(user.longitude, user.latitude)
+      ? (Number(user.longitude) + actLng) / 2
+      : actLng
+    const centerLat = user && isValidCoordinatePair(user.longitude, user.latitude)
+      ? (Number(user.latitude) + actLat) / 2
+      : actLat
+
+    const container = typeof document !== 'undefined' ? document.getElementById('nav-inline-map') : null
+    if (!container) return
 
     mapInstance = new AMap.Map('nav-inline-map', {
-      zoom: 15,
+      zoom: user ? 15 : 16,
       center: [centerLng, centerLat],
       resizeEnable: true,
-      viewMode: '2D'
+      viewMode: '3D'
     })
 
+    mapInstance.on('complete', () => {
+      if (mapInstance && typeof mapInstance.resize === 'function') {
+        mapInstance.resize()
+      }
+    })
+
+    setTimeout(() => {
+      if (mapInstance && typeof mapInstance.resize === 'function') {
+        mapInstance.resize()
+      }
+    }, 320)
+
     // 活动打卡点标记（终点）
-    const endMarker = new AMap.Marker({
-      position: [act.longitude, act.latitude],
+    endMarkerInstance = new AMap.Marker({
+      position: [actLng, actLat],
       title: act.locationName || '活动打卡点',
       label: {
         content: `<div style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;box-shadow:0 2px 6px rgba(239,68,68,0.4);">🏁 ${act.locationName || '打卡点'}</div>`,
         direction: 'top',
-        offset: [0, -4]
+        offset: new AMap.Pixel(0, -4)
       }
     })
-    mapInstance.add(endMarker)
+    mapInstance.add(endMarkerInstance)
 
     // 考勤围栏圈
     if (act.locationCheckEnabled && act.locationRadius) {
-      const fenceCircle = new AMap.Circle({
-        center: [act.longitude, act.latitude],
-        radius: act.locationRadius,
+      fenceCircleInstance = new AMap.Circle({
+        center: [actLng, actLat],
+        radius: Number(act.locationRadius),
         strokeColor: '#2563eb',
         strokeWeight: 2,
         strokeOpacity: 0.6,
@@ -214,25 +307,15 @@ const initNavMap = async () => {
         fillOpacity: 0.12,
         strokeStyle: 'dashed'
       })
-      mapInstance.add(fenceCircle)
+      mapInstance.add(fenceCircleInstance)
     }
 
     // 起点标记（当前位置）
-    if (user) {
-      myMarkerInstance = new AMap.Marker({
-        position: [user.longitude, user.latitude],
-        title: '我的位置',
-        label: {
-          content: '<div style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;box-shadow:0 2px 6px rgba(16,185,129,0.4);">📍 我的位置</div>',
-          direction: 'top',
-          offset: [0, -4]
-        }
-      })
-      mapInstance.add(myMarkerInstance)
+    if (user && isValidCoordinatePair(user.longitude, user.latitude)) {
+      updateUserMarker(user)
+      // 绘制导航路线（智能支持步行/远距离驾车与直连兜底）
+      await drawNavigationRoute()
     }
-
-    // 绘制步行路线
-    await drawWalkingRoute()
   } catch (err) {
     console.error('初始化导航地图失败:', err)
     uni.showToast({ title: '加载地图失败', icon: 'none' })
@@ -242,60 +325,199 @@ const initNavMap = async () => {
 }
 
 /**
- * 绘制步行路线
+ * 清除地图上已绘制的所有导航路线图层
  */
-const drawWalkingRoute = async () => {
+const clearRouteLayers = () => {
+  if (walkingRouteInstance && typeof walkingRouteInstance.clear === 'function') {
+    try { walkingRouteInstance.clear() } catch {}
+  }
+  walkingRouteInstance = null
+
+  if (drivingRouteInstance && typeof drivingRouteInstance.clear === 'function') {
+    try { drivingRouteInstance.clear() } catch {}
+  }
+  drivingRouteInstance = null
+
+  if (directLineInstance && mapInstance) {
+    try { mapInstance.remove(directLineInstance) } catch {}
+  }
+  directLineInstance = null
+}
+
+/**
+ * 智能路径规划与地图路线绘制
+ * 遵循高德地图 JSAPI (amap-jsapi-skill) 规范：
+ * 1. 距离 <= 3000 米：优先使用 AMap.Walking 步行路线规划
+ * 2. 距离 > 3000 米（或步行规划失败）：自动调用 AMap.Driving 驾车规划，彻底修复远距离/跨区/跨城无法显示导航的 bug
+ * 3. 极远无路网兜底：绘制高亮高德 Polyline 路径，确保 100% 显示导航路线
+ * 4. 纯净导航体验：无需冗长琐碎的分步文字说明，聚焦地图核心路径与总里程耗时
+ */
+const drawNavigationRoute = async () => {
   if (!mapInstance || !activity.value || !userLocation.value) return
   const AMap = window.AMap
   if (!AMap) return
 
-  // 加载步行路线规划插件
-  return new Promise<void>((resolve) => {
-    AMap.plugin('AMap.Walking', () => {
-      const walking = new AMap.Walking({
-        map: mapInstance,
-        panel: '',
-        hideMarkers: true // 使用自定义标记
-      })
+  const userLng = Number(userLocation.value.longitude)
+  const userLat = Number(userLocation.value.latitude)
+  const actLng = Number(activity.value.longitude)
+  const actLat = Number(activity.value.latitude)
+  if (!isValidCoordinatePair(userLng, userLat) || !isValidCoordinatePair(actLng, actLat)) return
 
-      const startPos = [userLocation.value!.longitude, userLocation.value!.latitude]
-      const endPos = [activity.value!.longitude, activity.value!.latitude]
+  const currentReqId = ++routeRequestId
+  clearRouteLayers()
 
-      walking.search(startPos, endPos, (status: string, result: any) => {
-        if (status === 'complete' && result.routes && result.routes.length > 0) {
-          const route = result.routes[0]
-          const distMeters = route.distance || 0
-          const durationSec = route.time || 0
-          const distStr = distMeters < 1000 ? `${distMeters}米` : `${(distMeters / 1000).toFixed(1)}公里`
-          const durationMin = Math.max(1, Math.round(durationSec / 60))
-          const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `约 ${durationMin} 分钟`
+  const startPos = new AMap.LngLat(userLng, userLat)
+  const endPos = new AMap.LngLat(actLng, actLat)
+  const distMeters = getAMapDistance(userLat, userLng, actLat, actLng)
 
-          // 解析详细路线指引步骤
-          const steps = (route.steps || []).map((s: any) => ({
-            instruction: s.instruction ? s.instruction.replace(/<[^>]+>/g, '') : '',
-            distance: s.distance || 0
-          })).filter((s: any) => Boolean(s.instruction))
+  // 辅助函数：绘制直连备用航线 (Polyline)
+  const drawDirectFallbackPolyline = () => {
+    if (currentReqId !== routeRequestId || !mapInstance) return
+    clearRouteLayers()
+    const distStr = distMeters < 1000 ? `${distMeters}米` : `${(distMeters / 1000).toFixed(1)}公里`
+    const mins = Math.max(1, Math.round(distMeters / 600))
+    const durStr = mins > 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分钟` : `约 ${mins} 分钟`
 
-          walkRouteInfo.value = { distance: distStr, duration: durStr, steps }
-          // 自适应视野
-          mapInstance.setFitView(null, false, [60, 60, 60, 60])
-        } else {
-          walkRouteInfo.value = null
-          // 无法规划路网时，仍适度展现起终点
-          mapInstance.setFitView(null, false, [60, 60, 60, 60])
+    directLineInstance = new AMap.Polyline({
+      path: [startPos, endPos],
+      strokeColor: '#2563eb',
+      strokeWeight: 6,
+      strokeOpacity: 0.85,
+      strokeStyle: 'dashed',
+      strokeDasharray: [10, 8],
+      lineJoin: 'round',
+      lineCap: 'round',
+      zIndex: 50
+    })
+    mapInstance.add(directLineInstance)
+    navRouteInfo.value = {
+      distance: distStr,
+      duration: durStr,
+      mode: 'direct',
+      modeName: '直线导航'
+    }
+    try {
+      mapInstance.setFitView([myMarkerInstance, endMarkerInstance, directLineInstance].filter(Boolean), false, [60, 60, 60, 60])
+    } catch {}
+  }
+
+  // 驾车规划逻辑（支持任意远距离、跨区跨城长途路线）
+  const runDrivingPlan = (): Promise<void> => {
+    return new Promise((resolve) => {
+      AMap.plugin('AMap.Driving', () => {
+        if (currentReqId !== routeRequestId || !mapInstance) {
+          resolve()
+          return
         }
-        resolve()
+        const driving = new AMap.Driving({
+          map: mapInstance,
+          hideMarkers: true,
+          showTraffic: false
+        })
+        drivingRouteInstance = driving
+
+        driving.search(startPos, endPos, (status: string, result: any) => {
+          if (currentReqId !== routeRequestId || !mapInstance) {
+            resolve()
+            return
+          }
+          if (status === 'complete' && result.routes && result.routes.length > 0) {
+            const route = result.routes[0]
+            const dMeters = route.distance || distMeters
+            const durationSec = route.time || 0
+            const distStr = dMeters < 1000 ? `${dMeters}米` : `${(dMeters / 1000).toFixed(1)}公里`
+            const durationMin = Math.max(1, Math.round(durationSec / 60))
+            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `约 ${durationMin} 分钟`
+
+            navRouteInfo.value = {
+              distance: distStr,
+              duration: durStr,
+              mode: 'drive',
+              modeName: '驾车'
+            }
+            try {
+              mapInstance.setFitView(null, false, [60, 60, 60, 60])
+            } catch {}
+            resolve()
+          } else {
+            console.warn('高德驾车路线规划返回无数据，降级为直连航线:', status, result)
+            drawDirectFallbackPolyline()
+            resolve()
+          }
+        })
       })
     })
-  })
+  }
+
+  // 步行规划逻辑（适合 3km 以内短途）
+  const runWalkingPlan = (): Promise<void> => {
+    return new Promise((resolve) => {
+      AMap.plugin('AMap.Walking', () => {
+        if (currentReqId !== routeRequestId || !mapInstance) {
+          resolve()
+          return
+        }
+        const walking = new AMap.Walking({
+          map: mapInstance,
+          hideMarkers: true
+        })
+        walkingRouteInstance = walking
+
+        walking.search(startPos, endPos, (status: string, result: any) => {
+          if (currentReqId !== routeRequestId || !mapInstance) {
+            resolve()
+            return
+          }
+          if (status === 'complete' && result.routes && result.routes.length > 0) {
+            const route = result.routes[0]
+            const dMeters = route.distance || distMeters
+            const durationSec = route.time || 0
+            const distStr = dMeters < 1000 ? `${dMeters}米` : `${(dMeters / 1000).toFixed(1)}公里`
+            const durationMin = Math.max(1, Math.round(durationSec / 60))
+            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `约 ${durationMin} 分钟`
+
+            navRouteInfo.value = {
+              distance: distStr,
+              duration: durStr,
+              mode: 'walk',
+              modeName: '步行'
+            }
+            try {
+              mapInstance.setFitView(null, false, [60, 60, 60, 60])
+            } catch {}
+            resolve()
+          } else {
+            // 步行规划因超距或无路网失败，自动平滑升级为驾车规划
+            console.warn('步行路线规划失败，自动升级为驾车导航规划:', status)
+            runDrivingPlan().then(resolve)
+          }
+        })
+      })
+    })
+  }
+
+  // 距离超 3000 米时直接调用驾车规划；3000 米以内优先步行
+  if (distMeters > 3000) {
+    await runDrivingPlan()
+  } else {
+    await runWalkingPlan()
+  }
 }
 
 /**
  * 视角复位到“我的位置”
  */
 const focusMyLocation = () => {
-  if (!mapInstance || !userLocation.value) return
-  mapInstance.setZoomAndCenter(17, [userLocation.value.longitude, userLocation.value.latitude])
+  if (!mapInstance) return
+  if (!userLocation.value) {
+    refreshUserLocation(false).then((success) => {
+      if (success && mapInstance && userLocation.value) {
+        mapInstance.setZoomAndCenter(17, [Number(userLocation.value.longitude), Number(userLocation.value.latitude)])
+      }
+    })
+    return
+  }
+  mapInstance.setZoomAndCenter(17, [Number(userLocation.value.longitude), Number(userLocation.value.latitude)])
 }
 
 /**
@@ -307,53 +529,24 @@ const focusFullRoute = () => {
 }
 
 /**
- * 启动实时位置追踪
+ * 启动实时位置追踪（高德融合定位轮询，确保 GCJ-02 真实坐标系）
  */
 const startLocationTracking = () => {
   stopLocationTracking()
-  if (typeof window !== 'undefined' && navigator.geolocation) {
-    try {
-      watchPositionId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const { longitude, latitude } = pos.coords
-          if (userLocation.value) {
-            userLocation.value.longitude = longitude
-            userLocation.value.latitude = latitude
-            if (myMarkerInstance) {
-              myMarkerInstance.setPosition([longitude, latitude])
-            }
-            if (activity.value) {
-              distanceToActivity.value = getAMapDistance(
-                latitude,
-                longitude,
-                activity.value.latitude,
-                activity.value.longitude
-              )
-            }
-          }
-        },
-        (err) => {
-          console.warn('实时定位监听提示:', err)
-        },
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-      )
-    } catch (e) {
-      console.warn('浏览器不支持watchPosition', e)
+  locationRefreshTimer = setInterval(() => {
+    if (isNavigating.value && !locatingUser.value) {
+      refreshUserLocation(true)
     }
-  }
+  }, 10000)
 }
 
 /**
  * 停止实时位置追踪
  */
 const stopLocationTracking = () => {
-  if (watchPositionId !== null && typeof window !== 'undefined' && navigator.geolocation) {
-    try {
-      navigator.geolocation.clearWatch(watchPositionId)
-    } catch (e) {
-      // ignore
-    }
-    watchPositionId = null
+  if (locationRefreshTimer !== null) {
+    clearInterval(locationRefreshTimer)
+    locationRefreshTimer = null
   }
 }
 
@@ -361,18 +554,38 @@ const stopLocationTracking = () => {
  * 销毁地图实例
  */
 const destroyMap = () => {
-  if (mapInstance) {
-    mapInstance.destroy()
-    mapInstance = null
+  if (navigationInitTimer !== null) {
+    clearTimeout(navigationInitTimer)
+    navigationInitTimer = null
+  }
+  routeRequestId += 1
+  clearRouteLayers()
+  if (myMarkerInstance && mapInstance) {
+    try { mapInstance.remove(myMarkerInstance) } catch {}
   }
   myMarkerInstance = null
-  walkRouteInfo.value = null
-  showRouteSteps.value = false
+  if (endMarkerInstance && mapInstance) {
+    try { mapInstance.remove(endMarkerInstance) } catch {}
+  }
+  endMarkerInstance = null
+  if (fenceCircleInstance && mapInstance) {
+    try { mapInstance.remove(fenceCircleInstance) } catch {}
+  }
+  fenceCircleInstance = null
+  if (mapInstance) {
+    try {
+      mapInstance.destroy()
+    } catch {}
+    mapInstance = null
+  }
+  navRouteInfo.value = null
 }
+
+const refreshing = ref(false)
 
 /**
  * 获取活动详情
- * @param silent 是否静默刷新（并发轮询与下拉刷新时不阻断页面、不闪烁加载框）
+ * @param silent 是否静默刷新（下拉刷新时不阻断页面、不闪烁加载框）
  */
 const fetchDetail = async (silent = false) => {
   if (!activityId.value) return
@@ -402,21 +615,21 @@ const fetchDetail = async (silent = false) => {
   }
 }
 
-/** 启动高频平滑短轮询（2秒/次），保持并发高频场景下名额与排队数与主页完全一致 */
-const startPolling = () => {
-  stopPolling()
-  pollTimer = setInterval(() => {
-    fetchDetail(true)
-  }, 2000)
-}
-
-/** 停止轮询 */
-const stopPolling = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+/**
+ * 手动点击刷新活动数据与最新名额
+ */
+const handleManualRefresh = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await fetchDetail(true)
+    uni.showToast({ title: '已刷新活动最新数据', icon: 'none' })
+  } finally {
+    refreshing.value = false
   }
 }
+
+
 
 // 报名状态与人数进度计算
 const enrolledCount = computed(() => {
@@ -584,52 +797,30 @@ onLoad((query: any) => {
   if (query && query.id) {
     activityId.value = Number(query.id)
   }
+  fetchDetail()
 })
 
 onPullDownRefresh(async () => {
   await fetchDetail(true)
   uni.stopPullDownRefresh()
+  uni.showToast({ title: '已刷新活动数据', icon: 'none' })
 })
 
 onShow(() => {
-  fetchDetail(activity.value ? true : false)
-  startPolling()
-})
-
-onHide(() => {
-  stopPolling()
+  // 页面重新展示时，若尚未拉取过活动数据则加载，避免高频轮询引起持续刷新
+  if (!activity.value && activityId.value) {
+    fetchDetail()
+  }
 })
 
 onUnload(() => {
-  stopPolling()
-})
-
-// 监听多标签并发测试焦点切换事件
-const handleVisibilityChange = () => {
-  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-    fetchDetail(true)
-  }
-}
-
-const handleWindowFocus = () => {
-  fetchDetail(true)
-}
-
-onMounted(() => {
-  if (typeof window !== 'undefined') {
-    window.addEventListener('focus', handleWindowFocus)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-  }
+  stopLocationTracking()
+  destroyMap()
 })
 
 onUnmounted(() => {
-  stopPolling()
   stopLocationTracking()
   destroyMap()
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('focus', handleWindowFocus)
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }
 })
 </script>
 
@@ -644,9 +835,11 @@ onUnmounted(() => {
             {{ statusInfo.statusLabel }}
           </text>
           <text v-if="activity.certificateEnabled" class="hero-tag tag-warning">颁发结业证书</text>
-          <view class="live-sync-indicator">
-            <view class="live-dot" />
-            <text class="live-text">实时同步中</text>
+          <view class="manual-refresh-pill" title="点击刷新活动名额与状态" @click="handleManualRefresh">
+            <svg class="refresh-pill-svg" :class="{ spinning: refreshing }" viewBox="0 0 24 24">
+              <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            <text class="refresh-pill-text">刷新名额</text>
           </view>
         </view>
         <view class="hero-title">{{ activity.title }}</view>
@@ -810,13 +1003,21 @@ onUnmounted(() => {
             <view class="nav-hud-header">
               <view class="nav-hud-status">
                 <view class="nav-live-dot" />
-                <text class="nav-hud-title">正在步行导航</text>
+                <text class="nav-hud-title">{{ navRouteInfo ? `${navRouteInfo.modeName}导航中` : '正在规划路线' }}</text>
               </view>
-              <view class="nav-hud-stop-btn" @click="stopNavigation">
-                <svg class="hud-stop-svg" viewBox="0 0 24 24">
-                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                </svg>
-                <text>结束导航</text>
+              <view class="nav-hud-actions">
+                <view class="nav-hud-amap-btn" title="呼起高德地图官方 App / Web 详细路线规划" @click="openExternalNav">
+                  <svg class="hud-amap-svg" viewBox="0 0 24 24">
+                    <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+                  </svg>
+                  <text>高德导航</text>
+                </view>
+                <view class="nav-hud-stop-btn" @click="stopNavigation">
+                  <svg class="hud-stop-svg" viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
+                  <text>结束</text>
+                </view>
               </view>
             </view>
 
@@ -824,7 +1025,7 @@ onUnmounted(() => {
             <view class="inline-map-wrapper">
               <view v-if="navMapLoading" class="map-loading-overlay">
                 <view class="map-loading-spinner" />
-                <text class="map-loading-text">正在规划步行路线...</text>
+                <text class="map-loading-text">正在规划导航路线...</text>
               </view>
               <view id="nav-inline-map" class="inline-map-canvas" />
 
@@ -843,74 +1044,24 @@ onUnmounted(() => {
               </view>
             </view>
 
-            <!-- 路线指引卡片 -->
-            <view v-if="walkRouteInfo" class="nav-guidance-card">
+            <!-- 路线信息卡片（聚焦地图核心路径与总里程耗时，无需冗余步骤文字） -->
+            <view v-if="navRouteInfo" class="nav-guidance-card">
               <view class="nav-guide-top">
                 <view class="nav-guide-target">
                   <text class="guide-target-icon">🏁</text>
                   <text class="guide-target-name">{{ activity.locationName || '活动打卡点' }}</text>
                 </view>
                 <view class="nav-guide-stats">
-                  <text class="guide-stat-dur">步行 {{ walkRouteInfo.duration }}</text>
+                  <text class="guide-stat-mode">{{ navRouteInfo.modeName }}约 {{ navRouteInfo.duration }}</text>
                   <text class="guide-stat-dot">·</text>
-                  <text class="guide-stat-dist">全程 {{ walkRouteInfo.distance }}</text>
+                  <text class="guide-stat-dist">全程 {{ navRouteInfo.distance }}</text>
                 </view>
               </view>
-
-              <!-- 当前第一步引导 -->
-              <view v-if="walkRouteInfo.steps && walkRouteInfo.steps.length > 0" class="nav-current-step">
-                <svg class="step-nav-svg" viewBox="0 0 24 24">
-                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+              <view class="nav-route-status-bar">
+                <svg class="route-ready-svg" viewBox="0 0 24 24">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                 </svg>
-                <text class="step-instruction-text">{{ walkRouteInfo.steps[0].instruction }}</text>
-              </view>
-
-              <!-- 展开/折叠路线明细按钮 -->
-              <view
-                v-if="walkRouteInfo.steps && walkRouteInfo.steps.length > 1"
-                class="toggle-steps-btn"
-                @click="showRouteSteps = !showRouteSteps"
-              >
-                <text>{{ showRouteSteps ? '收起路线明细' : `查看全部 ${walkRouteInfo.steps.length} 步路线指引` }}</text>
-                <svg class="toggle-arrow-svg" :class="{ 'arrow-up': showRouteSteps }" viewBox="0 0 24 24">
-                  <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
-                </svg>
-              </view>
-
-              <!-- 展开的路线明细列表 -->
-              <view v-if="showRouteSteps && walkRouteInfo.steps" class="route-steps-list">
-                <view
-                  v-for="(step, sIdx) in walkRouteInfo.steps"
-                  :key="sIdx"
-                  class="step-item-row"
-                >
-                  <view class="step-num-badge">{{ sIdx + 1 }}</view>
-                  <view class="step-item-content">
-                    <text class="step-item-desc">{{ step.instruction }}</text>
-                    <text v-if="step.distance" class="step-item-dist">{{ step.distance }}米</text>
-                  </view>
-                </view>
-              </view>
-            </view>
-
-            <!-- 无步行路网数据时的兜底指引 -->
-            <view v-else-if="!navMapLoading" class="nav-guidance-card">
-              <view class="nav-guide-top">
-                <view class="nav-guide-target">
-                  <text class="guide-target-icon">🏁</text>
-                  <text class="guide-target-name">{{ activity.locationName || '活动打卡点' }}</text>
-                </view>
-                <view class="nav-guide-stats">
-                  <text class="guide-stat-dur">步行 {{ estimatedDuration }}</text>
-                  <text class="guide-stat-dot">·</text>
-                  <text class="guide-stat-dist">直线 {{ formattedDistance }}</text>
-                </view>
-              </view>
-              <view class="nav-current-step">
-                <svg class="step-nav-svg" viewBox="0 0 24 24">
-                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
-                </svg>
-                <text class="step-instruction-text">请朝向地图红旗标记的活动打卡点方向步行前往</text>
+                <text class="route-ready-text">导航路线已就绪并在地图中高亮展示</text>
               </view>
             </view>
           </view>
@@ -987,7 +1138,18 @@ onUnmounted(() => {
       </view>
     </view>
 
+    <!-- 加载中状态 -->
+    <view v-else-if="loading" class="detail-state-card">
+      <view class="detail-state-spinner" />
+      <text class="detail-state-text">正在加载活动信息...</text>
+    </view>
 
+    <!-- 活动未找到/加载失败提示 -->
+    <view v-else class="detail-state-card">
+      <text class="detail-state-icon">📋</text>
+      <text class="detail-state-text">未找到该活动信息或活动已下线</text>
+      <button class="detail-retry-btn" @click="fetchDetail(false)">重新加载</button>
+    </view>
   </view>
 </template>
 
@@ -996,6 +1158,50 @@ onUnmounted(() => {
   min-height: 100vh;
   background-color: #f5f6f8;
   padding-bottom: 128rpx;
+}
+
+/* 加载中与空状态卡片 */
+.detail-state-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 160rpx 40rpx;
+  gap: 20rpx;
+}
+
+.detail-state-spinner {
+  width: 56rpx;
+  height: 56rpx;
+  border: 4rpx solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spinLoading 0.8s linear infinite;
+}
+
+@keyframes spinLoading {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.detail-state-icon {
+  font-size: 64rpx;
+  margin-bottom: 8rpx;
+}
+
+.detail-state-text {
+  font-size: 26rpx;
+  color: #64748b;
+}
+
+.detail-retry-btn {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  padding: 8rpx 36rpx;
+  background-color: #2563eb;
+  color: #ffffff;
+  border-radius: 999rpx;
+  border: none;
 }
 
 /* 头部 Hero */
@@ -1030,39 +1236,36 @@ onUnmounted(() => {
   color: #ffffff;
 }
 
-/* 实时同步指示器 */
-.live-sync-indicator {
+/* 手动刷新胶囊按键 */
+.manual-refresh-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8rpx;
-  background: rgba(255, 255, 255, 0.15);
+  gap: 6rpx;
+  background: rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(8px);
-  padding: 4rpx 14rpx;
+  padding: 6rpx 16rpx;
   border-radius: 999rpx;
-  font-size: 20rpx;
-  color: #e2e8f0;
   margin-left: auto;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
 }
 
-.live-dot {
-  width: 12rpx;
-  height: 12rpx;
-  border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 8rpx #10b981;
-  animation: livePulse 2s infinite ease-in-out;
+.manual-refresh-pill:active {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.35);
 }
 
-@keyframes livePulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.8;
-  }
-  50% {
-    transform: scale(1.35);
-    opacity: 1;
-    box-shadow: 0 0 12rpx #34d399;
-  }
+.refresh-pill-svg {
+  width: 22rpx;
+  height: 22rpx;
+  fill: #ffffff;
+}
+
+.refresh-pill-text {
+  font-size: 20rpx;
+  color: #ffffff;
+  font-weight: 500;
 }
 
 .hero-title {
@@ -1835,6 +2038,38 @@ onUnmounted(() => {
   color: #f8fafc;
 }
 
+.nav-hud-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.nav-hud-amap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  background: rgba(37, 99, 235, 0.25);
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  color: #93c5fd;
+  padding: 6rpx 14rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nav-hud-amap-btn:active {
+  background: rgba(37, 99, 235, 0.45);
+  transform: scale(0.95);
+}
+
+.hud-amap-svg {
+  width: 20rpx;
+  height: 20rpx;
+  fill: #93c5fd;
+}
+
 .nav-hud-stop-btn {
   display: inline-flex;
   align-items: center;
@@ -1871,6 +2106,13 @@ onUnmounted(() => {
 .inline-map-canvas {
   width: 100%;
   height: 100%;
+}
+
+:deep(.amap-marker-label) {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
 }
 
 /* 地图浮动工具按键 */
@@ -1948,106 +2190,44 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
+.guide-stat-mode {
+  font-size: 24rpx;
+  color: #2563eb;
+  font-weight: 700;
+}
+
 .guide-stat-dot {
   color: #94a3b8;
 }
 
-/* 当前指引指令 */
-.nav-current-step {
+.guide-stat-dist {
+  font-size: 24rpx;
+  color: #1e40af;
+  font-weight: 700;
+}
+
+/* 导航路线就绪状态栏 */
+.nav-route-status-bar {
   display: flex;
   align-items: center;
   gap: 12rpx;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
   border-radius: 12rpx;
   padding: 14rpx 18rpx;
 }
 
-.step-nav-svg {
-  width: 30rpx;
-  height: 30rpx;
-  fill: #2563eb;
+.route-ready-svg {
+  width: 28rpx;
+  height: 28rpx;
+  fill: #16a34a;
   flex-shrink: 0;
 }
 
-.step-instruction-text {
+.route-ready-text {
   font-size: 24rpx;
   font-weight: 600;
-  color: #1e40af;
+  color: #15803d;
   line-height: 1.4;
-}
-
-/* 折叠/展开步骤列表 */
-.toggle-steps-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8rpx;
-  font-size: 22rpx;
-  color: #64748b;
-  margin-top: 16rpx;
-  padding: 8rpx 0;
-  cursor: pointer;
-}
-
-.toggle-arrow-svg {
-  width: 24rpx;
-  height: 24rpx;
-  fill: #64748b;
-  transition: transform 0.2s ease;
-}
-
-.toggle-arrow-svg.arrow-up {
-  transform: rotate(180deg);
-}
-
-.route-steps-list {
-  margin-top: 12rpx;
-  padding-top: 12rpx;
-  border-top: 1px dashed #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  gap: 12rpx;
-  max-height: 360rpx;
-  overflow-y: auto;
-}
-
-.step-item-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 14rpx;
-  padding: 6rpx 0;
-}
-
-.step-num-badge {
-  width: 32rpx;
-  height: 32rpx;
-  border-radius: 50%;
-  background: #e0f2fe;
-  color: #0284c7;
-  font-size: 20rpx;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.step-item-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4rpx;
-  flex: 1;
-}
-
-.step-item-desc {
-  font-size: 22rpx;
-  color: #334155;
-  line-height: 1.4;
-}
-
-.step-item-dist {
-  font-size: 20rpx;
-  color: #94a3b8;
 }
 </style>

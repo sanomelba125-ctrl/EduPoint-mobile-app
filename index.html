@@ -7,11 +7,38 @@
       document.write('<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0' + (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
     <script type="text/javascript">
+      // 拦截原生浏览器 Geolocation，避免 Chrome 内核向 Google NLP 发起网络请求导致的 ERR_BLOCKED_BY_CLIENT
+      if (typeof window !== 'undefined' && window.navigator && window.navigator.geolocation) {
+        var geo = window.navigator.geolocation;
+        geo.getCurrentPosition = function(success, error) {
+          if (typeof error === 'function') {
+            setTimeout(function() {
+              error({
+                code: 2, // POSITION_UNAVAILABLE
+                message: 'Native browser geolocation disabled to prevent blocked Google NLP requests'
+              });
+            }, 0);
+          }
+        };
+        geo.watchPosition = function(success, error) {
+          if (typeof error === 'function') {
+            setTimeout(function() {
+              error({
+                code: 2,
+                message: 'Native browser geolocation disabled to prevent blocked Google NLP requests'
+              });
+            }, 0);
+          }
+          return 0;
+        };
+        geo.clearWatch = function() {};
+      }
+
       window._AMapSecurityConfig = {
         securityJsCode: '77b5607769c0e45c2ad22c6b454220ca'
       }
     </script>
-    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=f2bb704018d6fb8aafa3d1bcb880b62d&plugin=AMap.Geolocation,AMap.Geocoder,AMap.GeometryUtil"></script>
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=f2bb704018d6fb8aafa3d1bcb880b62d&plugin=AMap.Geolocation,AMap.Geocoder,AMap.GeometryUtil,AMap.Walking,AMap.Driving,AMap.CitySearch"></script>
     <title>学生活动打卡移动端</title>
     <!--preload-links-->
     <!--app-context-->

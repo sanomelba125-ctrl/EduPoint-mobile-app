@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { onLoad, onHide, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import {
   getActivityDetailApi,
+  getActivityPageApi,
   checkinActivityApi,
   type ActivityItem,
   type CheckinResult
@@ -14,6 +15,9 @@ import {
   getAMapDistance,
   isValidCoordinatePair,
 } from '@/utils/amap'
+// #ifdef H5
+import jsQR from 'jsqr'
+// #endif
 
 const userStore = useUserStore()
 
@@ -21,6 +25,34 @@ const actId = ref<number>(1)
 const activity = ref<ActivityItem | null>(null)
 const flashActive = ref(false)
 const checkingIn = ref(false)
+
+// 摄像头与原生 WebRTC + jsQR 状态管理
+let activeStream: MediaStream | null = null
+let scanTimer: any = null
+let canvasEl: HTMLCanvasElement | null = null
+let canvasCtx: CanvasRenderingContext2D | null = null
+let barcodeDetector: any = null
+
+if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+  try {
+    barcodeDetector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
+  } catch (e) {
+    barcodeDetector = null
+  }
+}
+
+const cameraActive = ref(false)
+const cameraLoading = ref(false)
+const cameraError = ref('')
+const camerasList = ref<{ id: string; label: string }[]>([])
+const currentCameraIndex = ref(0)
+const scanLocked = ref(false)
+
+const activeCameraLabel = computed(() => {
+  if (camerasList.value.length === 0) return ''
+  const cur = camerasList.value[currentCameraIndex.value]
+  return cur?.label || `镜头 ${currentCameraIndex.value + 1}`
+})
 
 // 电脑端模拟扫码：JSON / 文本输入框
 const rawQrInput = ref<string>('')
@@ -43,6 +75,17 @@ const loadActivity = async () => {
     activity.value = act
     await updateGpsDistance(true)
   } catch (err: any) {
+    console.warn(`加载活动 ${actId.value} 失败，尝试获取广场首项活动兜底...`, err)
+    try {
+      const pageRes = await getActivityPageApi({ page: 1, size: 5 })
+      if (pageRes && pageRes.records && pageRes.records.length > 0) {
+        const fallbackAct = pageRes.records[0]
+        actId.value = fallbackAct.id
+        activity.value = fallbackAct
+        await updateGpsDistance(true)
+        return
+      }
+    } catch {}
     uni.showToast({ title: err?.message || '加载活动信息失败', icon: 'none' })
   }
 }
@@ -89,7 +132,29 @@ const calcDist = () => {
   isWithinRadius.value = !activity.value.locationCheckEnabled || dist <= (activity.value.locationRadius || 500)
 }
 
-const toggleFlashlight = () => {
+const toggleFlashlight = async () => {
+  // #ifdef H5
+  if (activeStream && cameraActive.value) {
+    const track = activeStream.getVideoTracks()[0]
+    if (track && 'applyConstraints' in track) {
+      try {
+        flashActive.value = !flashActive.value
+        await (track as any).applyConstraints({
+          advanced: [{ torch: flashActive.value }]
+        })
+        uni.showToast({
+          title: flashActive.value ? '补光灯已开启' : '补光灯已关闭',
+          icon: 'none'
+        })
+        return
+      } catch (e) {
+        flashActive.value = false
+        uni.showToast({ title: '当前摄像头硬件不支持补光灯', icon: 'none' })
+        return
+      }
+    }
+  }
+  // #endif
   flashActive.value = !flashActive.value
   uni.showToast({
     title: flashActive.value ? '补光灯已开启' : '补光灯已关闭',
@@ -281,12 +346,381 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
 
     checkinResult.value = res
     showSuccessModal.value = true
+    stopCamera()
   } catch (err: any) {
     uni.hideLoading()
     uni.showToast({ title: getApiErrorMessage(err, '打卡核验未通过'), icon: 'none' })
+    setTimeout(() => {
+      scanLocked.value = false
+    }, 2500)
   } finally {
     checkingIn.value = false
   }
+}
+
+/**
+ * 原生 HTML5 video 元素管理（避开 uni-app 将 template <video> 强行转为带有播放器控制条的 uni-video 控件）
+ */
+let nativeVideoEl: HTMLVideoElement | null = null
+
+const ensureNativeVideo = (): HTMLVideoElement | null => {
+  if (nativeVideoEl && nativeVideoEl.parentElement) {
+    return nativeVideoEl
+  }
+  const container = document.getElementById('scannerVideoContainer')
+  if (!container) return null
+
+  container.innerHTML = ''
+  const v = document.createElement('video')
+  v.id = 'scannerVideo'
+  v.autoplay = true
+  v.playsInline = true
+  v.muted = true
+  v.setAttribute('autoplay', 'true')
+  v.setAttribute('playsinline', 'true')
+  v.setAttribute('webkit-playsinline', 'true')
+  v.setAttribute('muted', 'true')
+  v.className = 'qr-native-video'
+  container.appendChild(v)
+  nativeVideoEl = v
+  return v
+}
+
+/**
+ * 启动原生 HTML5 WebRTC 视频流与双引擎扫码
+ */
+let isStartingCamera = false
+
+const initAndStartCamera = async () => {
+  // #ifdef H5
+  if (typeof window === 'undefined') return
+  if (isStartingCamera) {
+    console.log('摄像头正在初始化流程中，跳过并发调用')
+    return
+  }
+  isStartingCamera = true
+  cameraLoading.value = true
+  cameraError.value = ''
+  scanLocked.value = false
+
+  try {
+    await stopCamera()
+    await nextTick()
+
+    // 1. 枚举设备
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const videoDevs = devices
+          .filter(d => d.kind === 'videoinput')
+          .map((d, i) => ({
+            id: d.deviceId,
+            label: d.label || `摄像头 ${i + 1}`
+          }))
+        if (videoDevs.length > 0) {
+          camerasList.value = videoDevs
+        }
+      } catch (e) {
+        console.warn('枚举摄像头异常:', e)
+      }
+    }
+
+    const isMobile = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+
+    const constraints: MediaStreamConstraints = {
+      audio: false,
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    }
+
+    if (camerasList.value.length > 0 && camerasList.value[currentCameraIndex.value]?.id) {
+      (constraints.video as MediaTrackConstraints).deviceId = {
+        exact: camerasList.value[currentCameraIndex.value].id
+      }
+    } else {
+      (constraints.video as MediaTrackConstraints).facingMode = isMobile ? { ideal: 'environment' } : 'user'
+    }
+
+    // 2. 调用浏览器原生 getUserMedia
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    activeStream = stream
+
+    // 3. 授权后再次刷新设备列表（此时可获取真实名称如 Integrated Camera）
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videoDevs = devices
+        .filter(d => d.kind === 'videoinput')
+        .map((d, i) => ({
+          id: d.deviceId,
+          label: d.label || `摄像头 ${i + 1}`
+        }))
+      if (videoDevs.length > 0) {
+        camerasList.value = videoDevs
+      }
+    } catch {}
+
+    // 4. 将视频流直连到原生 video 元素（避开 uni-app 的 uni-video 组件拦截）
+    const videoEl = ensureNativeVideo()
+    if (videoEl) {
+      videoEl.srcObject = stream
+      try {
+        await videoEl.play()
+      } catch (playErr) {
+        console.warn('Video play auto-resume:', playErr)
+      }
+    }
+
+    cameraActive.value = true
+    cameraLoading.value = false
+
+    // 5. 启动 BarcodeDetector + jsQR 混合扫码检测循环
+    startScanLoop()
+  } catch (err: any) {
+    console.error('启动摄像头失败：', err)
+    cameraActive.value = false
+    cameraLoading.value = false
+    const errMsg = err?.message || String(err)
+    if (errMsg.includes('NotAllowedError') || errMsg.includes('Permission')) {
+      cameraError.value = '摄像头权限已被拦截，请在浏览器地址栏允许使用摄像头'
+    } else if (errMsg.includes('NotFoundError') || errMsg.includes('DevicesNotFoundError')) {
+      cameraError.value = '未检测到可用摄像头硬件设备'
+    } else if (errMsg.includes('NotReadableError')) {
+      cameraError.value = '摄像头正被其他程序占用，请关闭冲突软件后重试'
+    } else {
+      cameraError.value = `摄像头启动受阻: ${errMsg}`
+    }
+  } finally {
+    isStartingCamera = false
+  }
+  // #endif
+}
+
+/**
+ * 安全停止并释放摄像头硬件流
+ */
+const stopCamera = async () => {
+  // #ifdef H5
+  if (scanTimer) {
+    clearInterval(scanTimer)
+    scanTimer = null
+  }
+  if (activeStream) {
+    activeStream.getTracks().forEach(track => {
+      try {
+        track.stop()
+      } catch (e) {}
+    })
+    activeStream = null
+  }
+  if (nativeVideoEl) {
+    try {
+      nativeVideoEl.pause()
+    } catch (e) {}
+    nativeVideoEl.srcObject = null
+  }
+  cameraActive.value = false
+  cameraLoading.value = false
+  flashActive.value = false
+  // #endif
+}
+
+/**
+ * 帧扫描循环（BarcodeDetector 原生硬件加速 + jsQR 工业级兜底）
+ */
+const startScanLoop = () => {
+  // #ifdef H5
+  if (scanTimer) clearInterval(scanTimer)
+
+  scanTimer = setInterval(async () => {
+    if (!cameraActive.value || scanLocked.value) return
+    const videoEl = nativeVideoEl || (document.getElementById('scannerVideo') as HTMLVideoElement)
+    if (!videoEl || videoEl.readyState < 2 || videoEl.videoWidth === 0) return
+
+    // 优先：原生 BarcodeDetector (Chrome / Edge / Chromium 极速硬件加速)
+    if (barcodeDetector) {
+      try {
+        const barcodes = await barcodeDetector.detect(videoEl)
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+          onScanSuccess(barcodes[0].rawValue)
+          return
+        }
+      } catch (e) {}
+    }
+
+    // 备用：Canvas 抽帧 + jsQR 纯 JS 工业级解析
+    try {
+      if (!canvasEl) {
+        canvasEl = document.createElement('canvas')
+      }
+      const vw = videoEl.videoWidth
+      const vh = videoEl.videoHeight
+      if (vw > 0 && vh > 0) {
+        const targetW = Math.min(vw, 640)
+        const targetH = Math.floor(vh * (targetW / vw))
+        canvasEl.width = targetW
+        canvasEl.height = targetH
+        if (!canvasCtx) {
+          canvasCtx = canvasEl.getContext('2d', { willReadFrequently: true })
+        }
+        if (canvasCtx) {
+          canvasCtx.drawImage(videoEl, 0, 0, targetW, targetH)
+          const imgData = canvasCtx.getImageData(0, 0, targetW, targetH)
+          const code = jsQR(imgData.data, imgData.width, imgData.height, {
+            inversionAttempts: 'dontInvert'
+          })
+          if (code && code.data) {
+            onScanSuccess(code.data)
+          }
+        }
+      }
+    } catch (e) {}
+  }, 220)
+  // #endif
+}
+
+/**
+ * 切换摄像头（支持 PC 外置/内置或手机前置/后置）
+ */
+const switchCamera = async () => {
+  if (camerasList.value.length <= 1) {
+    uni.showToast({ title: '当前仅检测到一个可用摄像头', icon: 'none' })
+    return
+  }
+  await stopCamera()
+  currentCameraIndex.value = (currentCameraIndex.value + 1) % camerasList.value.length
+  uni.showToast({
+    title: `已切换至：${activeCameraLabel.value || '镜头 ' + (currentCameraIndex.value + 1)}`,
+    icon: 'none'
+  })
+  await initAndStartCamera()
+}
+
+/**
+ * 触发本地图片二维码识别
+ */
+const triggerFileInput = () => {
+  // #ifdef H5
+  const inputEl = document.getElementById('qr-file-input') as HTMLInputElement
+  if (inputEl) {
+    inputEl.value = ''
+    inputEl.click()
+  }
+  // #endif
+  // #ifndef H5
+  uni.chooseImage({
+    count: 1,
+    sourceType: ['album'],
+    success: (res) => {
+      uni.scanCode({
+        onlyFromCamera: false,
+        scanType: ['qrCode'],
+        success: (scanRes) => {
+          onScanSuccess(scanRes.result)
+        }
+      })
+    }
+  })
+  // #endif
+}
+
+const handleFileChange = async (event: Event) => {
+  // #ifdef H5
+  const target = event.target as HTMLInputElement
+  if (!target.files || target.files.length === 0) return
+  const file = target.files[0]
+
+  uni.showLoading({ title: '正在识别图片二维码...', mask: true })
+  try {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = url
+    })
+
+    let recognizedText = ''
+
+    // 引擎1：BarcodeDetector
+    if (barcodeDetector) {
+      try {
+        const barcodes = await barcodeDetector.detect(img)
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+          recognizedText = barcodes[0].rawValue
+        }
+      } catch (e) {}
+    }
+
+    // 引擎2：jsQR
+    if (!recognizedText) {
+      const fileCanvas = document.createElement('canvas')
+      fileCanvas.width = img.naturalWidth || img.width
+      fileCanvas.height = img.naturalHeight || img.height
+      const fileCtx = fileCanvas.getContext('2d')
+      if (fileCtx) {
+        fileCtx.drawImage(img, 0, 0)
+        const imgData = fileCtx.getImageData(0, 0, fileCanvas.width, fileCanvas.height)
+        const code = jsQR(imgData.data, imgData.width, imgData.height, {
+          inversionAttempts: 'attemptBoth'
+        })
+        if (code && code.data) {
+          recognizedText = code.data
+        }
+      }
+    }
+
+    URL.revokeObjectURL(url)
+    uni.hideLoading()
+
+    if (recognizedText) {
+      onScanSuccess(recognizedText)
+    } else {
+      uni.showToast({ title: '未在图片中识别出有效二维码', icon: 'none' })
+    }
+  } catch (err: any) {
+    uni.hideLoading()
+    uni.showToast({ title: '图片读取失败，请检查文件格式', icon: 'none' })
+  }
+  // #endif
+}
+
+/**
+ * 二维码扫描成功总入口
+ */
+const onScanSuccess = (decodedText: string) => {
+  if (scanLocked.value) return
+  scanLocked.value = true
+
+  // 震动与识别提示
+  try { uni.vibrateShort?.({}) } catch {}
+  uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
+
+  rawQrInput.value = decodedText
+
+  setTimeout(() => {
+    try {
+      const parsed = parseQrPayload(decodedText)
+      if (parsed.activityId !== actId.value) {
+        uni.showToast({
+          title: `该签到码属于活动 ${parsed.activityId}，请进入对应活动打卡`,
+          icon: 'none',
+          duration: 3000
+        })
+        setTimeout(() => {
+          scanLocked.value = false
+        }, 2500)
+        return
+      }
+      doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
+    } catch (e: any) {
+      uni.showToast({ title: e?.message || '二维码格式解析失败', icon: 'none' })
+      setTimeout(() => {
+        scanLocked.value = false
+      }, 2500)
+    }
+  }, 400)
 }
 
 const handleRealScan = () => {
@@ -295,17 +729,7 @@ const handleRealScan = () => {
     onlyFromCamera: true,
     scanType: ['qrCode'],
     success: (res) => {
-      try { uni.vibrateShort?.({}) } catch {}
-      uni.showToast({ title: '二维码识别成功', icon: 'success', duration: 1200 })
-      rawQrInput.value = res.result
-      setTimeout(() => {
-        try {
-          const parsed = parseQrPayload(res.result)
-          doCheckin(parsed.nonce, parsed.sign, parsed.activityId)
-        } catch (e: any) {
-          uni.showToast({ title: e?.message || '二维码解析失败', icon: 'none' })
-        }
-      }, 400)
+      onScanSuccess(res.result)
     },
     fail: () => {
       uni.showToast({ title: '已取消扫码', icon: 'none' })
@@ -314,17 +738,20 @@ const handleRealScan = () => {
   // #endif
 
   // #ifdef H5
-  // H5 电脑端没有摄像头桥接，仅支持粘贴真实二维码内容。
-  if (rawQrInput.value.trim()) {
+  if (!cameraActive.value) {
+    initAndStartCamera()
+    uni.showToast({ title: '正在启动摄像头扫码...', icon: 'none' })
+  } else if (rawQrInput.value.trim()) {
     handleParseAndCheckinClick()
   } else {
-    uni.showToast({ title: '请先粘贴真实签到二维码内容', icon: 'none' })
+    uni.showToast({ title: '请将动态二维码置于取景框中', icon: 'none' })
   }
   // #endif
 }
 
 const goBackHall = () => {
   showSuccessModal.value = false
+  stopCamera()
   uni.switchTab({
     url: '/pages/activity/index'
   })
@@ -332,6 +759,7 @@ const goBackHall = () => {
 
 const goToCertificates = () => {
   showSuccessModal.value = false
+  stopCamera()
   uni.showModal({
     title: '荣誉电子证书',
     content: `已成功为您颁发「${activity.value?.certificateTitle || '学术实训结业证书'}」！\n证书编号：CERT-2026-00${actId.value}，可在个人中心随时查看与核验导出。`,
@@ -343,11 +771,43 @@ const goToCertificates = () => {
   })
 }
 
-onLoad((query: any) => {
-  const parsedId = Number(query?.actId || query?.activityId || query?.id)
-  if (Number.isInteger(parsedId) && parsedId > 0) {
-    actId.value = parsedId
+let pageLoadedOnce = false
+
+onMounted(() => {
+  // #ifdef H5
+  pageLoadedOnce = true
+  initAndStartCamera()
+  // #endif
+})
+
+onShow(() => {
+  // #ifdef H5
+  if (!pageLoadedOnce) return
+  if (!cameraActive.value && !isStartingCamera && !showSuccessModal.value) {
+    initAndStartCamera()
   }
+  // #endif
+})
+
+onHide(() => {
+  // #ifdef H5
+  stopCamera()
+  // #endif
+})
+
+onBeforeUnmount(() => {
+  // #ifdef H5
+  stopCamera()
+  // #endif
+})
+
+onLoad(async (query: any) => {
+  const rawId = query?.actId || query?.activityId || query?.id
+  let parsedId = Number(rawId)
+  if (!Number.isInteger(parsedId) || parsedId <= 0 || String(rawId).includes('object')) {
+    parsedId = 1
+  }
+  actId.value = parsedId
 
   // 若 URL 直接带有 nonce 和 sign，自动填入模拟输入框
   if (query?.nonce && query?.sign) {
@@ -358,7 +818,7 @@ onLoad((query: any) => {
     }, null, 2)
   }
 
-  loadActivity()
+  await loadActivity()
 })
 </script>
 
@@ -392,22 +852,83 @@ onLoad((query: any) => {
     <!-- 主体扫描与输入区域 -->
     <view class="scanner-body">
       <!-- 科技感扫描取景框 -->
-      <view class="scan-viewfinder">
-        <view class="scan-corner corner-tl" />
-        <view class="scan-corner corner-tr" />
-        <view class="scan-corner corner-bl" />
-        <view class="scan-corner corner-br" />
-        <view class="scan-laser" />
-        <view class="scan-watermark">
-          <svg class="watermark-svg" viewBox="0 0 24 24">
+      <view class="scan-viewfinder-wrapper">
+        <!-- 原生视频元素挂载容器（纯 div，彻底绕开 uni-app 自动注入 uni-video 播放器控件） -->
+        <!-- #ifdef H5 -->
+        <div id="scannerVideoContainer" class="qr-video-container"></div>
+        <!-- #endif -->
+        <!-- #ifndef H5 -->
+        <view id="qr-reader" class="qr-video-container"></view>
+        <!-- #endif -->
+
+        <!-- 摄像头状态提示（加载中 / 未开启 / 出错）使用 v-show 彻底杜绝 DOM 节点重建 -->
+        <view v-show="cameraLoading" class="camera-state-overlay">
+          <view class="camera-spinner" />
+          <text class="camera-state-text">正在启动摄像头硬件...</text>
+        </view>
+
+        <view v-show="!cameraActive && !cameraLoading" class="camera-state-overlay camera-inactive">
+          <svg class="camera-off-svg" viewBox="0 0 24 24">
             <path d="M4,4H10V10H4V4M20,4V10H14V4H20M14,15H16V13H14V11H16V13H18V11H20V13H18V15H20V18H18V20H16V18H13V20H11V16H14V15M16,15V18H18V15H16M4,20V14H10V20H4M6,6V8H8V6H6M16,6V8H18V6H16M6,16V18H8V16H6M4,11H6V13H4V11M9,11H13V15H11V13H9V11M11,6H13V10H11V6M2,2V12H12V2H2M2,22H12V12H2V22M22,2H12V12H22V2M22,22V16H18V20H16V22H22Z"/>
           </svg>
+          <text v-if="cameraError" class="camera-state-text error-text">{{ cameraError }}</text>
+          <text v-else class="camera-state-text">摄像头未开启或已被暂停</text>
+          <button class="btn-start-camera" @click="initAndStartCamera">开启摄像头</button>
         </view>
+
+        <!-- 科技感取景装饰层 -->
+        <view class="scan-decor-overlay">
+          <view class="scan-corner corner-tl" />
+          <view class="scan-corner corner-tr" />
+          <view class="scan-corner corner-bl" />
+          <view class="scan-corner corner-br" />
+          <view v-show="cameraActive && !scanLocked" class="scan-laser" />
+          <view v-show="scanLocked" class="scan-success-mask">
+            <text class="scan-success-badge">✓ 二维码已识别</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 摄像头状态指示与控制操作栏 -->
+      <view class="camera-control-bar">
+        <view class="camera-status-pill" :class="{ online: cameraActive }">
+          <view class="status-dot" />
+          <text class="status-label">{{ cameraActive ? (activeCameraLabel || '摄像头扫描中') : '摄像头已停用' }}</text>
+        </view>
+        <view class="camera-action-btns">
+          <button v-if="cameraActive" class="cam-action-btn" @click="stopCamera">
+            <svg class="cam-icon" viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M9,9H15V15H9V9Z"/></svg>
+            <text>暂停</text>
+          </button>
+          <button v-else class="cam-action-btn primary" @click="initAndStartCamera">
+            <svg class="cam-icon" viewBox="0 0 24 24"><path d="M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9Z"/></svg>
+            <text>启动</text>
+          </button>
+          <button v-if="camerasList.length > 1" class="cam-action-btn" @click="switchCamera">
+            <svg class="cam-icon" viewBox="0 0 24 24"><path d="M12,4V1L8,5L12,9V6C15.31,6 18,8.69 18,12C18,13.04 17.74,14.03 17.27,14.89L18.73,16.35C19.53,15.08 20,13.6 20,12A8,8 0 0,0 12,4M6.73,7.65C5.93,8.92 5.5,10.4 5.5,12A8,8 0 0,0 13.5,20V23L17.5,19L13.5,15V18C10.19,18 7.5,15.31 7.5,12C7.5,10.96 7.76,9.97 8.23,9.11L6.73,7.65Z"/></svg>
+            <text>换镜头</text>
+          </button>
+          <button class="cam-action-btn" @click="triggerFileInput">
+            <svg class="cam-icon" viewBox="0 0 24 24"><path d="M19,19H5V5H19M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M13.96,12.29L11.21,15.83L9.25,13.47L6.5,17H17.5L13.96,12.29Z"/></svg>
+            <text>传图识别</text>
+          </button>
+        </view>
+        <!-- 隐藏的原生文件上传控件 -->
+        <!-- #ifdef H5 -->
+        <input
+          id="qr-file-input"
+          type="file"
+          accept="image/*"
+          style="display: none;"
+          @change="handleFileChange"
+        />
+        <!-- #endif -->
       </view>
 
       <view class="scan-guidelines">
         <view class="guide-line1">请对准大屏幕展示的动态签到二维码</view>
-        <view class="guide-line2">在电脑模拟器或无摄像头环境下，可在下方输入或粘贴二维码 JSON</view>
+        <view class="guide-line2">支持 PC/手机 摄像头自动取景；无摄像头亦可在下方直接粘贴 JSON 打卡</view>
+        <view class="guide-tip-camera">💡 若画面为黑屏，请检查电脑摄像头防窥物理滑盖是否已开启，或按快捷键(如FnLock/F8)解除隐私遮挡</view>
       </view>
 
       <!-- 移动端模拟扫码：输入 JSON 模拟方框 -->
@@ -644,15 +1165,220 @@ onLoad((query: any) => {
   overflow-y: auto;
 }
 
-.scan-viewfinder {
-  width: 260rpx;
-  height: 260rpx;
+.scan-viewfinder-wrapper {
+  width: 520rpx;
+  height: 520rpx;
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 20rpx;
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: #020617;
   overflow: hidden;
-  box-shadow: 0 0 60rpx rgba(64, 158, 255, 0.2);
+  box-shadow: 0 0 60rpx rgba(64, 158, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.qr-native-video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  background-color: #020617 !important;
+}
+
+.qr-video-container,
+:deep(#qr-reader) {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+:deep(#qr-reader__scan_region),
+:deep(#qr-reader > div) {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+:deep(#qr-reader video),
+.qr-video-container video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+:deep(#qr-shaded-region),
+:deep(#qr-reader__dashboard_section) {
+  display: none !important;
+}
+
+.camera-state-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.96);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30rpx;
+  text-align: center;
+  gap: 16rpx;
+}
+
+.camera-spinner {
+  width: 50rpx;
+  height: 50rpx;
+  border: 4rpx solid rgba(56, 189, 248, 0.2);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.camera-off-svg {
+  width: 64rpx;
+  height: 64rpx;
+  fill: #64748b;
+  opacity: 0.6;
+}
+
+.camera-state-text {
+  font-size: 22rpx;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.camera-state-text.error-text {
+  color: #f87171;
+}
+
+.btn-start-camera {
+  margin-top: 10rpx;
+  padding: 10rpx 28rpx;
+  font-size: 22rpx;
+  background: #0284c7;
+  color: #ffffff;
+  border-radius: 8rpx;
+  border: none;
+  font-weight: 600;
+}
+
+.scan-decor-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.scan-success-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(34, 197, 94, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #22c55e;
+  border-radius: 20rpx;
+  backdrop-filter: blur(2px);
+}
+
+.scan-success-badge {
+  background: #16a34a;
+  color: #ffffff;
+  font-size: 28rpx;
+  font-weight: 700;
+  padding: 12rpx 28rpx;
+  border-radius: 30rpx;
+  box-shadow: 0 4rpx 14rpx rgba(0, 0, 0, 0.3);
+}
+
+/* 控制条 */
+.camera-control-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20rpx;
+  padding: 12rpx 16rpx;
+  background: rgba(30, 41, 59, 0.7);
+  border-radius: 12rpx;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.camera-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  font-size: 22rpx;
+  color: #94a3b8;
+  max-width: 260rpx;
+}
+
+.status-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  background: #64748b;
+  flex-shrink: 0;
+}
+
+.camera-status-pill.online .status-dot {
+  background: #22c55e;
+  box-shadow: 0 0 10rpx #22c55e;
+}
+
+.camera-status-pill.online {
+  color: #86efac;
+}
+
+.status-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.cam-action-btn {
+  font-size: 20rpx;
+  padding: 8rpx 14rpx;
+  border-radius: 6rpx;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  line-height: 1;
+  margin: 0;
+}
+
+.cam-action-btn.primary {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.cam-action-btn:active {
+  opacity: 0.8;
+}
+
+.cam-icon {
+  width: 22rpx;
+  height: 22rpx;
+  fill: currentColor;
 }
 
 /* 边角 */
@@ -705,7 +1431,7 @@ onLoad((query: any) => {
 
 @keyframes laserSweep {
   0% { top: 20rpx; opacity: 0.3; }
-  50% { top: 230rpx; opacity: 1; }
+  50% { top: 490rpx; opacity: 1; }
   100% { top: 20rpx; opacity: 0.3; }
 }
 
@@ -740,6 +1466,14 @@ onLoad((query: any) => {
   font-size: 22rpx;
   color: #38bdf8;
   margin-top: 4rpx;
+}
+
+.guide-tip-camera {
+  font-size: 20rpx;
+  color: #fde047;
+  margin-top: 10rpx;
+  line-height: 1.4;
+  opacity: 0.92;
 }
 
 /* 💻 电脑端模拟扫码面板样式 */

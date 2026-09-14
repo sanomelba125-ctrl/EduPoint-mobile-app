@@ -50,8 +50,11 @@ export function loadAMapSDK(): Promise<any> {
     }
 
     if (window.AMap) {
+      if (typeof window.AMap.getConfig === 'function') {
+        window.AMap.getConfig().appname = 'amap-jsapi-skill'
+      }
       if (window.AMap.plugin) {
-        window.AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder', 'AMap.GeometryUtil'], () => {
+        window.AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder', 'AMap.GeometryUtil', 'AMap.Walking', 'AMap.Driving', 'AMap.CitySearch'], () => {
           resolve(window.AMap)
         })
       } else {
@@ -63,11 +66,14 @@ export function loadAMapSDK(): Promise<any> {
     const script = document.createElement('script')
     script.type = 'text/javascript'
     script.async = true
-    script.src = `https://webapi.amap.com/maps?v=${AMAP_CONFIG.version}&key=${AMAP_CONFIG.key}&plugin=AMap.Geolocation,AMap.Geocoder,AMap.GeometryUtil`
+    script.src = `https://webapi.amap.com/maps?v=${AMAP_CONFIG.version}&key=${AMAP_CONFIG.key}&plugin=AMap.Geolocation,AMap.Geocoder,AMap.GeometryUtil,AMap.Walking,AMap.Driving,AMap.CitySearch`
 
     script.onload = () => {
       if (window.AMap) {
-        window.AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder', 'AMap.GeometryUtil'], () => {
+        if (typeof window.AMap.getConfig === 'function') {
+          window.AMap.getConfig().appname = 'amap-jsapi-skill'
+        }
+        window.AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder', 'AMap.GeometryUtil', 'AMap.Walking', 'AMap.Driving', 'AMap.CitySearch'], () => {
           resolve(window.AMap)
         })
       } else {
@@ -173,6 +179,89 @@ function getLocationError(error: any): Error {
 export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
   await ensureLocationAuthorization()
 
+  // #ifdef H5
+  // 在 H5 浏览器环境下，优先使用已注入高德安全密钥的 AMap.Geolocation
+  // 核心参数：完全关闭原生浏览器定位 (noGeoLocation: 3)，优先走高德 IP/Wi-Fi 网络定位，杜绝 Chrome 请求 Google NLP 造成的 ERR_BLOCKED_BY_CLIENT
+  try {
+    const AMap = await loadAMapSDK()
+    if (AMap && AMap.Geolocation) {
+      const aMapLoc = await new Promise<any>((res, rej) => {
+        const geolocation = new AMap.Geolocation({
+          enableHighAccuracy: false, // 禁用原生高精度 GPS 探针，防止 Chrome 调用 Google NLP
+          timeout: 4000,
+          needAddress: true,
+          extensions: 'all',
+          GeoLocationFirst: false, // 优先使用高德自建网络定位通道
+          noGeoLocation: 3,        // 核心：3=都不用原生定位（不论是PC还是手机模拟器），彻底杜绝 Google NLP (ERR_BLOCKED_BY_CLIENT)
+          getCityWhenFail: true    // 失败时降级返回城市定位
+        })
+        geolocation.getCurrentPosition((status: string, result: any) => {
+          if (status === 'complete' && result && (result.position || result.center)) {
+            res(result)
+          } else {
+            // 降级使用 IP 城市定位，获取城市中心经纬度与地名
+            geolocation.getCityInfo((cityStatus: string, cityResult: any) => {
+              if (cityStatus === 'complete' && (cityResult.center || cityResult.position)) {
+                res({
+                  position: cityResult.center || cityResult.position,
+                  formattedAddress: cityResult.province ? `${cityResult.province}${cityResult.city || ''}` : '当前城市中心',
+                  city: cityResult.city,
+                  province: cityResult.province
+                })
+              } else {
+                // 第三道兜底：AMap.CitySearch 纯服务端 IP 城市定位（100% 不触发浏览器原生网络提供商）
+                try {
+                  AMap.plugin('AMap.CitySearch', () => {
+                    const citySearch = new AMap.CitySearch()
+                    citySearch.getLocalCity((cStatus: string, cResult: any) => {
+                      if (cStatus === 'complete' && cResult.rectangle) {
+                        const parts = String(cResult.rectangle).split(';')[0].split(',')
+                        const cLng = Number(parts[0])
+                        const cLat = Number(parts[1])
+                        res({
+                          position: [cLng, cLat],
+                          formattedAddress: cResult.city || cResult.province || '当前城市',
+                          city: cResult.city,
+                          province: cResult.province
+                        })
+                      } else {
+                        rej(new Error(result?.message || '高德定位服务未就绪'))
+                      }
+                    })
+                  })
+                } catch {
+                  rej(new Error(result?.message || '高德定位服务未就绪'))
+                }
+              }
+            })
+          }
+        })
+      })
+
+      if (aMapLoc) {
+        const pos = aMapLoc.position || aMapLoc.center
+        const rawLng = typeof pos?.getLng === 'function' ? pos.getLng() : (Array.isArray(pos) ? pos[0] : pos?.lng)
+        const rawLat = typeof pos?.getLat === 'function' ? pos.getLat() : (Array.isArray(pos) ? pos[1] : pos?.lat)
+        const lng = Number(rawLng)
+        const lat = Number(rawLat)
+        if (isValidCoordinatePair(lng, lat)) {
+          return {
+            latitude: Number(lat.toFixed(6)),
+            longitude: Number(lng.toFixed(6)),
+            accuracy: Number(aMapLoc.accuracy) || undefined,
+            formattedAddress: aMapLoc.formattedAddress || `经度:${lng.toFixed(4)}, 纬度:${lat.toFixed(4)}`,
+            source: 'DEVICE_GPS'
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    throw new Error(e?.message || '无法获取定位信息')
+  }
+  throw new Error('高德地图定位组件未能初始化')
+  // #endif
+
+  // #ifndef H5
   return new Promise((resolve, reject) => {
     let settled = false
     const timeoutId = setTimeout(() => {
@@ -225,6 +314,7 @@ export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
       }
     } as any)
   })
+  // #endif
 }
 
 export function isValidCoordinatePair(longitude: unknown, latitude: unknown): boolean {
@@ -332,11 +422,20 @@ export function openAMapNavigation(options: NavigationOptions): void {
     return
   }
 
+  // 智能适配出行方式：若未强行指定且距离超过 3000 米，自动升级为驾车规划，避免高德跨长距离步行失败
+  let actualMode = mode
+  if (isValidCoordinatePair(fromLng, fromLat) && mode === 'walk') {
+    const dist = getAMapDistance(Number(fromLat), Number(fromLng), Number(toLat), Number(toLng))
+    if (dist > 3000) {
+      actualMode = 'car'
+    }
+  }
+
   // #ifdef H5
   if (typeof window !== 'undefined') {
     // 构造高德官方 Web / App 呼起 URI
     // 官方规范：https://lbs.amap.com/api/uri-api/guide/travel/route
-    let uri = `https://uri.amap.com/navigation?to=${toLng},${toLat},${encodeURIComponent(toName)}&mode=${mode}&callnative=1`
+    let uri = `https://uri.amap.com/navigation?to=${toLng},${toLat},${encodeURIComponent(toName)}&mode=${actualMode}&callnative=1`
     if (isValidCoordinatePair(fromLng, fromLat)) {
       uri += `&from=${fromLng},${fromLat},${encodeURIComponent(fromName)}`
     }
