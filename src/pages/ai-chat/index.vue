@@ -183,7 +183,7 @@ const sendMessage = async (questionText?: string) => {
     // #endif
     // #ifndef H5
     const custom = uni.getStorageSync('api_base_url')
-    baseUrl = custom || (import.meta.env.VITE_APP_BASE_URL as string) || 'http://localhost:8088/api'
+    baseUrl = custom || (import.meta.env.VITE_APP_BASE_URL as string) || 'http://localhost:8080/api'
     // #endif
 
     const headers: Record<string, string> = {
