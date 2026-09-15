@@ -6,7 +6,7 @@ const getBaseUrl = (): string => {
   return '/api'
   // #endif
   // #ifndef H5
-  return 'http://localhost:8088/api'
+  return 'http://localhost:8080/api'
   // #endif
 }
 const BASE_URL = getBaseUrl()

@@ -22,7 +22,7 @@ function getWebSocketUrl(studentId: number | string): string {
   }
   // #endif
 
-  return `ws://localhost:8088/api/ws/student/${studentId}`
+  return `ws://localhost:8080/api/ws/student/${studentId}`
 }
 
 /**
