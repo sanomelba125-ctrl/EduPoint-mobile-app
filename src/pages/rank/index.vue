@@ -10,7 +10,7 @@ import {
 } from '@/api/point'
 
 const userStore = useUserStore()
-const { userInfo } = storeToRefs(userStore)
+const { userInfo, isLoggedIn } = storeToRefs(userStore)
 
 const loading = ref(false)
 const rankData = ref<StudentRankResultVO>({
@@ -60,6 +60,15 @@ const myRankInfo = computed(() => {
 
 const diffToPrev = computed(() => rankData.value.diffToPrevious || 0)
 const prevName = computed(() => rankData.value.previousStudentName || '')
+
+// 点击吸底栏跳转逻辑
+const handleStickyBarClick = () => {
+  if (!isLoggedIn.value) {
+    uni.navigateTo({ url: '/pages/login/index' })
+  } else {
+    uni.navigateTo({ url: '/pages/my/points' })
+  }
+}
 
 onPullDownRefresh(() => {
   fetchRank()
@@ -163,34 +172,57 @@ onMounted(() => {
       </view>
     </view>
 
-    <!-- 吸底本人排名条 -->
-    <view class="my-sticky-rank">
-      <view class="sticky-left">
-        <view class="rank-pill">
-          第 {{ myRankInfo.rank || '-' }} 名
-        </view>
-        <view class="sticky-text-col">
-          <view class="my-name-txt">
-            {{ myRankInfo.name || userInfo.name }}（本人）
+    <!-- 底部常驻吸底栏：展示当前登录学生全校排名与积分 (吸附在 TabBar 正上方) -->
+    <view class="my-sticky-rank" @tap="handleStickyBarClick">
+      <!-- 已登录状态展示真实全校排名与积分 -->
+      <template v-if="isLoggedIn">
+        <view class="sticky-left">
+          <!-- 排名胶囊徽章 -->
+          <view :class="['rank-pill', myRankInfo.rank === 1 ? 'pill-gold' : myRankInfo.rank === 2 ? 'pill-silver' : myRankInfo.rank === 3 ? 'pill-bronze' : 'pill-blue']">
+            <text v-if="myRankInfo.rank === 1" class="pill-crown">👑</text>
+            第 {{ myRankInfo.rank > 0 ? myRankInfo.rank : '-' }} 名
           </view>
-          <view class="my-sub-txt">
-            <template v-if="myRankInfo.rank === 1">
-              🎉 傲视群雄 · 稳居全校积分榜首！
-            </template>
-            <template v-else-if="diffToPrev > 0 && prevName">
-              距上一名 {{ prevName }} 仅差 {{ diffToPrev }} pts
-            </template>
-            <template v-else>
-              积极参与志愿活动提升学分排名
-            </template>
+          <view class="sticky-text-col">
+            <view class="my-name-row">
+              <text class="my-name-txt">{{ myRankInfo.name || userInfo.name }}</text>
+              <text class="me-tag-pill">本人</text>
+            </view>
+            <view class="my-sub-txt">
+              <template v-if="myRankInfo.rank === 1">
+                🎉 傲视群雄 · 稳居全校积分榜首！
+              </template>
+              <template v-else-if="diffToPrev > 0 && prevName">
+                🔥 距上一名 {{ prevName }} 仅差 {{ diffToPrev }} pts
+              </template>
+              <template v-else>
+                积极参与校园打卡活动提升学分排名
+              </template>
+            </view>
           </view>
         </view>
-      </view>
 
-      <view class="sticky-right">
-        <text class="my-pts-num">{{ myRankInfo.totalPoints }}</text>
-        <text class="my-pts-unit">pts</text>
-      </view>
+        <view class="sticky-right">
+          <view class="pts-box">
+            <text class="my-pts-num">{{ myRankInfo.totalPoints }}</text>
+            <text class="my-pts-unit">pts</text>
+          </view>
+          <text class="detail-arrow">明细 ›</text>
+        </view>
+      </template>
+
+      <!-- 未登录引导状态 -->
+      <template v-else>
+        <view class="sticky-left unlogged-box">
+          <text class="unlogged-icon">🔒</text>
+          <view class="sticky-text-col">
+            <view class="my-name-txt">尚未登录学生身份</view>
+            <view class="my-sub-txt">点击前往认证登录，解锁查看全校学分位次</view>
+          </view>
+        </view>
+        <view class="sticky-right">
+          <view class="login-action-btn">去登录 ›</view>
+        </view>
+      </template>
     </view>
   </view>
 </template>
@@ -199,7 +231,9 @@ onMounted(() => {
 .rank-page-wrap {
   min-height: 100vh;
   background-color: #f5f6f8;
-  padding-bottom: 120rpx;
+  /* 留足常驻吸底栏（约 120rpx）和系统 TabBar（约 50px）空间，确保最末行可滚动到底部 */
+  padding-bottom: calc(140rpx + var(--window-bottom, 50px) + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
 
 .rank-top-hero {
@@ -260,140 +294,144 @@ onMounted(() => {
   font-size: 38rpx;
 }
 
-.col-second .podium-avatar-box {
-  border: 4rpx solid #cbd5e1;
-}
-
-.col-third .podium-avatar-box {
-  border: 4rpx solid #f59e0b;
-}
-
 .crown-icon {
   position: absolute;
   top: -24rpx;
-  font-size: 32rpx;
+  font-size: 28rpx;
+}
+
+.crown-icon.gold {
+  top: -30rpx;
+  font-size: 36rpx;
+}
+
+.crown-icon.bronze {
+  filter: sepia(0.8);
 }
 
 .podium-name {
-  font-size: 24rpx;
-  font-weight: 600;
-  margin-top: 8rpx;
-  color: #ffffff;
-}
-
-.col-first .podium-name {
   font-size: 26rpx;
-  font-weight: 700;
+  font-weight: 600;
+  margin-top: 14rpx;
+  color: #ffffff;
+  max-width: 160rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .podium-pts {
   font-size: 22rpx;
-  opacity: 0.9;
-  margin-top: 2rpx;
+  color: #93c5fd;
+  margin-top: 4rpx;
 }
 
 .gold-pts {
-  color: #fef08a;
-  font-weight: 600;
+  color: #fbbf24;
+  font-weight: 700;
 }
 
 .podium-base {
   width: 100%;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 12rpx 12rpx 0 0;
+  padding: 16rpx 0;
+  margin-top: 16rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 12rpx 4rpx;
-  margin-top: 12rpx;
 }
 
 .col-first .podium-base {
-  height: 170rpx;
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.9) 0%, rgba(180, 83, 9, 0.9) 100%);
+  height: 120rpx;
+  background: rgba(251, 191, 36, 0.2);
+  border: 1rpx solid rgba(251, 191, 36, 0.4);
+  border-bottom: none;
 }
 
 .col-second .podium-base {
-  height: 136rpx;
-  background: linear-gradient(180deg, rgba(148, 163, 184, 0.8) 0%, rgba(71, 85, 105, 0.8) 100%);
+  height: 96rpx;
 }
 
 .col-third .podium-base {
-  height: 112rpx;
-  background: linear-gradient(180deg, rgba(217, 119, 6, 0.8) 0%, rgba(120, 53, 15, 0.8) 100%);
+  height: 76rpx;
 }
 
 .base-num {
-  font-size: 36rpx;
-  font-weight: 900;
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #ffffff;
 }
 
 .col-first .base-num {
-  font-size: 44rpx;
+  font-size: 38rpx;
+  color: #fbbf24;
 }
 
 .base-dept {
-  font-size: 20rpx;
-  opacity: 0.85;
+  font-size: 18rpx;
+  color: #94a3b8;
   margin-top: 2rpx;
+  max-width: 140rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* 列表容器 */
 .rank-list-sheet {
   background: #ffffff;
-  border-radius: 24rpx 24rpx 0 0;
+  border-radius: 28rpx 28rpx 0 0;
   margin-top: -20rpx;
-  padding: 28rpx 32rpx 120rpx;
-  min-height: 600rpx;
+  padding: 24rpx 32rpx;
   position: relative;
   z-index: 10;
+  box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.05);
 }
 
 .list-header-row {
   display: flex;
   justify-content: space-between;
   font-size: 22rpx;
-  color: #909399;
-  padding-bottom: 12rpx;
-  border-bottom: 1rpx solid #ebeef5;
+  color: #94a3b8;
+  padding: 8rpx 12rpx 16rpx;
+  border-bottom: 1rpx solid #f1f5f9;
 }
 
 .rank-row-item {
   display: flex;
   align-items: center;
-  padding: 20rpx 0;
-  border-bottom: 1rpx solid #ebeef5;
+  padding: 24rpx 12rpx;
+  border-bottom: 1rpx solid #f8fafc;
+  transition: background-color 0.2s ease;
 }
 
-.rank-row-item.is-me-highlight {
-  background: #ecf5ff;
-  border-radius: 8rpx;
-  padding: 20rpx 16rpx;
-  margin: 8rpx -16rpx;
+.is-me-highlight {
+  background-color: #f0fdf4;
+  border-radius: 16rpx;
+  border-bottom: 1rpx solid transparent;
 }
 
 .rank-num-badge {
-  width: 56rpx;
-  text-align: center;
-  font-size: 26rpx;
+  font-size: 28rpx;
   font-weight: 700;
-  color: #909399;
-}
-
-.is-me-highlight .rank-num-badge {
-  color: #409eff;
+  color: #64748b;
+  width: 52rpx;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .rank-user-avatar {
-  width: 68rpx;
-  height: 68rpx;
+  width: 72rpx;
+  height: 72rpx;
   border-radius: 50%;
-  background: #f0f2f5;
-  color: #606266;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 26rpx;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26rpx;
-  font-weight: 600;
   margin-left: 12rpx;
   flex-shrink: 0;
 }
@@ -406,36 +444,35 @@ onMounted(() => {
 .rank-user-details {
   flex: 1;
   margin-left: 20rpx;
+  min-width: 0;
 }
 
 .rank-user-name {
-  font-size: 26rpx;
+  font-size: 28rpx;
   font-weight: 600;
-  color: #303133;
-}
-
-.is-me-highlight .rank-user-name {
-  color: #409eff;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
 }
 
 .me-tag {
   font-size: 20rpx;
-  color: #409eff;
+  color: #10b981;
   font-weight: normal;
-  margin-left: 4rpx;
 }
 
 .rank-user-dept {
   font-size: 22rpx;
-  color: #909399;
-  margin-top: 2rpx;
+  color: #94a3b8;
+  margin-top: 4rpx;
 }
 
 .rank-points-val {
-  text-align: right;
+  font-size: 32rpx;
   font-weight: 700;
-  color: #409eff;
-  font-size: 28rpx;
+  color: #0f172a;
+  flex-shrink: 0;
 }
 
 .pts-unit-txt {
@@ -452,66 +489,165 @@ onMounted(() => {
   color: #c0c4cc;
 }
 
+/* =======================================================
+   底部常驻吸底栏 (固定吸附在 uni-tabbar 正上方)
+   ======================================================= */
 .my-sticky-rank {
   position: fixed;
-  bottom: 0;
   left: 0;
   right: 0;
-  background: #1e293b;
+  /* 核心：吸附在 uni-app 原生/自定义 TabBar 之上 */
+  bottom: var(--window-bottom, 50px);
+  z-index: 99;
+  box-sizing: border-box;
+  padding: 16rpx 28rpx;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(30, 41, 59, 0.98) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: #ffffff;
-  padding: 18rpx 32rpx;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 90;
-  box-shadow: 0 -4rpx 20rpx rgba(0, 0, 0, 0.15);
+  border-top: 2rpx solid rgba(251, 191, 36, 0.35);
+  box-shadow: 0 -8rpx 30rpx rgba(0, 0, 0, 0.35);
+  transition: all 0.25s ease;
+}
+
+.my-sticky-rank:active {
+  background: rgba(30, 41, 59, 0.98);
 }
 
 .sticky-left {
   display: flex;
   align-items: center;
   gap: 16rpx;
+  flex: 1;
+  min-width: 0;
+}
+
+.unlogged-box {
+  gap: 14rpx;
+}
+
+.unlogged-icon {
+  font-size: 36rpx;
 }
 
 .rank-pill {
   font-size: 22rpx;
   font-weight: 700;
-  background: #409eff;
+  padding: 6rpx 18rpx;
+  border-radius: 24rpx;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  flex-shrink: 0;
+}
+
+.pill-gold {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   color: #ffffff;
-  padding: 6rpx 16rpx;
-  border-radius: 20rpx;
+  box-shadow: 0 4rpx 12rpx rgba(245, 158, 11, 0.4);
+}
+
+.pill-silver {
+  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  color: #ffffff;
+}
+
+.pill-bronze {
+  background: linear-gradient(135deg, #b45309 0%, #78350f 100%);
+  color: #ffffff;
+}
+
+.pill-blue {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: #ffffff;
+}
+
+.pill-crown {
+  font-size: 20rpx;
 }
 
 .sticky-text-col {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+}
+
+.my-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
 }
 
 .my-name-txt {
-  font-size: 24rpx;
-  font-weight: 600;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-tag-pill {
+  font-size: 18rpx;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1rpx solid rgba(56, 189, 248, 0.4);
+  padding: 0rpx 10rpx;
+  border-radius: 12rpx;
 }
 
 .my-sub-txt {
   font-size: 20rpx;
   color: #94a3b8;
-  margin-top: 2rpx;
+  margin-top: 4rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sticky-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: 20rpx;
+  flex-shrink: 0;
+}
+
+.pts-box {
   display: flex;
   align-items: baseline;
   gap: 4rpx;
 }
 
 .my-pts-num {
-  font-size: 32rpx;
-  font-weight: 700;
+  font-size: 34rpx;
+  font-weight: 800;
   color: #fbbf24;
+  letter-spacing: -0.5rpx;
 }
 
 .my-pts-unit {
-  font-size: 22rpx;
+  font-size: 20rpx;
   color: #cbd5e1;
+}
+
+.detail-arrow {
+  font-size: 20rpx;
+  color: #64748b;
+  margin-top: 2rpx;
+}
+
+.login-action-btn {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: #2563eb;
+  padding: 10rpx 22rpx;
+  border-radius: 20rpx;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.35);
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, nextTick, onMounted, onUnmounted } from 'vue'
-import { getRecommendedFaqsApi, type AiFaqItem } from '@/api/ai'
+import { getRecommendedFaqsApi, getChatHistoryApi, clearChatHistoryApi, type AiFaqItem } from '@/api/ai'
 import { useUserStore } from '@/stores'
 
 interface ChatMessage {
@@ -39,6 +39,7 @@ const userStore = useUserStore()
 const messages = ref<ChatMessage[]>([])
 const inputContent = ref('')
 const isGenerating = ref(false)
+const isLoadingHistory = ref(false)
 const recommendedFaqs = ref<AiFaqItem[]>([])
 const scrollIntoViewId = ref('')
 const currentAbortController = ref<AbortController | null>(null)
@@ -49,6 +50,43 @@ const formatTime = () => {
   const h = String(d.getHours()).padStart(2, '0')
   const m = String(d.getMinutes()).padStart(2, '0')
   return `${h}:${m}`
+}
+
+// 页面加载获取历史对话记录
+const fetchChatHistory = async () => {
+  try {
+    isLoadingHistory.value = true
+    const token = uni.getStorageSync('student_token')
+    const params: Record<string, any> = { limit: 50 }
+    if (!token) {
+      params.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
+    }
+    const historyList = await getChatHistoryApi(params)
+    if (historyList && historyList.length > 0) {
+      const formatted: ChatMessage[] = historyList.map(item => ({
+        id: String(item.id),
+        role: item.role === 'user' ? 'user' : 'assistant',
+        content: item.content,
+        source: item.source,
+        isStreaming: false,
+        toolCall: item.toolCall ? {
+          toolName: item.toolCall.toolName,
+          description: item.toolCall.description,
+          status: item.toolCall.status,
+          arguments: item.toolCall.arguments,
+          resultFactJson: item.toolCall.resultFactJson,
+          executionTimeMs: item.toolCall.executionTimeMs
+        } : undefined,
+        time: item.time || (item.createTime ? item.createTime.substring(11, 16) : formatTime())
+      }))
+      messages.value = formatted
+      forceScrollToBottom()
+    }
+  } catch (e) {
+    console.error('加载历史消息失败', e)
+  } finally {
+    isLoadingHistory.value = false
+  }
 }
 
 // 页面加载获取推荐问题
@@ -98,18 +136,28 @@ const forceScrollToBottom = () => {
 const handleClearChat = () => {
   uni.showModal({
     title: '清空会话',
-    content: '确定要清空与小智的全部对话记录吗？',
+    content: '确定要清空与小智的全部对话记录吗？数据库历史记录也将同步清除。',
     confirmText: '清空',
     confirmColor: '#ef4444',
     cancelText: '取消',
-    success: (res) => {
+    success: async (res) => {
       if (res.confirm) {
         if (isGenerating.value && currentAbortController.value) {
           currentAbortController.value.abort()
           isGenerating.value = false
         }
-        messages.value = []
-        uni.showToast({ title: '会话已清空', icon: 'none' })
+        try {
+          const token = uni.getStorageSync('student_token')
+          const params: Record<string, any> = {}
+          if (!token) {
+            params.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
+          }
+          await clearChatHistoryApi(params)
+          messages.value = []
+          uni.showToast({ title: '会话已清空', icon: 'none' })
+        } catch (e: any) {
+          uni.showToast({ title: e?.message || '清空失败，请重试', icon: 'none' })
+        }
       }
     }
   })
@@ -318,6 +366,7 @@ const goToLogin = () => {
 
 onMounted(() => {
   fetchRecommendedFaqs()
+  fetchChatHistory()
 })
 
 onUnmounted(() => {
@@ -429,6 +478,7 @@ onUnmounted(() => {
               <text v-else-if="msg.source === 'LOCAL_AGENT'" class="source-pill synth">本地智能工具引擎</text>
               <text v-else-if="msg.source === 'LOCAL_SYNTHESIS'" class="source-pill synth">个人业务实时核对</text>
               <text v-else-if="msg.source === 'SENSENOVA'" class="source-pill ai">商汤 SenseNova 6.8</text>
+              <text v-else-if="msg.source === 'QWEN'" class="source-pill ai">通义千问 Qwen 3.8</text>
               <text v-else class="source-pill ai">AI 智能推理</text>
             </view>
 
