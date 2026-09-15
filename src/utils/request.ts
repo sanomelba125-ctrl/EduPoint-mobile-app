@@ -1,7 +1,15 @@
 import { useUserStore } from '@/stores/user'
 
 // 跨端通用请求封装 (微信小程序 / H5 / App)
-const BASE_URL = 'http://localhost:8080/api' // 本地开发后端接口地址
+const getBaseUrl = (): string => {
+  // #ifdef H5
+  return '/api'
+  // #endif
+  // #ifndef H5
+  return 'http://localhost:8088/api'
+  // #endif
+}
+const BASE_URL = getBaseUrl()
 
 let isHandling401 = false
 

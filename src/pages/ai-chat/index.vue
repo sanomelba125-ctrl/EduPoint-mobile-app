@@ -9,7 +9,28 @@ interface ChatMessage {
   content: string
   source?: string
   isStreaming?: boolean
+  toolCall?: {
+    toolName: string
+    description?: string
+    status: string
+    arguments?: string
+    resultFactJson?: string
+    executionTimeMs?: number
+  }
   time: string
+}
+
+const toolNameMap: Record<string, string> = {
+  query_my_points: '查询个人积分与流水明细',
+  query_my_orders: '查询礼品兑换订单与提货码',
+  query_my_activities: '查询校园活动报名与候补',
+  query_my_certificates: '查询荣誉结项证书与验真码',
+  search_platform_knowledge: '检索官方知识库规则'
+}
+
+const formatToolName = (name?: string) => {
+  if (!name) return '业务数据工具'
+  return toolNameMap[name] || name
 }
 
 const userStore = useUserStore()
@@ -155,8 +176,16 @@ const sendMessage = async (questionText?: string) => {
     const controller = new AbortController()
     currentAbortController.value = controller
 
-    // 优先读取 BASE_URL 环境变量或默认本地端口
-    const baseUrl = 'http://localhost:8080/api'
+    // 动态解析后端地址 (H5 环境直接使用同源相对路径 /api，彻底规避跨域与本地 8080 端口冲突)
+    let baseUrl = ''
+    // #ifdef H5
+    baseUrl = '/api'
+    // #endif
+    // #ifndef H5
+    const custom = uni.getStorageSync('api_base_url')
+    baseUrl = custom || (import.meta.env.VITE_APP_BASE_URL as string) || 'http://localhost:8088/api'
+    // #endif
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     }
@@ -164,10 +193,16 @@ const sendMessage = async (questionText?: string) => {
       headers['satoken'] = token
     }
 
+    const payload: Record<string, any> = { question: text }
+    // 若未登录学籍，自动附带默认演示学号(张晓明 2023010401)，方便直观体验 Function Calling 真实数据查询
+    if (!token) {
+      payload.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
+    }
+
     const response = await fetch(`${baseUrl}/ai/chat/stream`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ question: text }),
+      body: JSON.stringify(payload),
       signal: controller.signal
     })
 
@@ -219,6 +254,19 @@ const sendMessage = async (questionText?: string) => {
                 messages.value[assistantIndex].source = data.source
               }
             }
+            if (data.toolCall) {
+              assistantMsg.toolCall = {
+                toolName: data.toolCall.toolName,
+                description: data.toolCall.description,
+                status: data.toolCall.status,
+                arguments: data.toolCall.argumentsJson || data.toolCall.arguments,
+                resultFactJson: data.toolCall.resultFactJson,
+                executionTimeMs: data.toolCall.executionTimeMs
+              }
+              if (messages.value[assistantIndex]) {
+                messages.value[assistantIndex].toolCall = assistantMsg.toolCall
+              }
+            }
             if (data.finish) {
               assistantMsg.isStreaming = false
               if (messages.value[assistantIndex]) {
@@ -262,6 +310,10 @@ const logInfo = (msg: string) => {
 const handleQuickAsk = (cmd: string) => {
   if (isGenerating.value) return
   sendMessage(cmd)
+}
+
+const goToLogin = () => {
+  uni.navigateTo({ url: '/pages/login/index' })
 }
 
 onMounted(() => {
@@ -315,7 +367,13 @@ onUnmounted(() => {
         <view class="personal-hint-box" v-if="userStore.isLoggedIn">
           <text class="hint-icon">✨</text>
           <text class="hint-text">
-            已检测到您的学生登录身份，您可以直接询问“我还有多少积分”、“我的礼品发货了吗”！
+            已识别学生学籍【{{ userStore.userInfo?.name || '同学' }} ({{ userStore.userInfo?.studentNo }})】，可直接查询积分、活动、提货码！
+          </text>
+        </view>
+        <view class="personal-hint-box unlogin" v-else @click="goToLogin">
+          <text class="hint-icon">🎓</text>
+          <text class="hint-text">
+            当前以演示学生【张晓明 (2023010401)】快速体验 Function Calling。<text class="link-text">点此登录个人账号</text>
           </text>
         </view>
 
@@ -364,12 +422,23 @@ onUnmounted(() => {
 
           <!-- 气泡正文 -->
           <view class="msg-bubble-wrap">
-            <!-- 来源标签 (知识库/大模型) -->
+            <!-- 来源标签 (知识库/大模型/工具调度) -->
             <view class="msg-source-tag" v-if="msg.role === 'assistant' && msg.source">
               <text v-if="msg.source === 'KNOWLEDGE_BASE'" class="source-pill kb">官方权威解答</text>
+              <text v-else-if="msg.source === 'TOOL_AGENT'" class="source-pill tool">Function Calling 智能调度</text>
+              <text v-else-if="msg.source === 'LOCAL_AGENT'" class="source-pill synth">本地智能工具引擎</text>
               <text v-else-if="msg.source === 'LOCAL_SYNTHESIS'" class="source-pill synth">个人业务实时核对</text>
-              <text v-else-if="msg.source === 'SENSENOVA'" class="source-pill ai">商汤 SenseNova</text>
+              <text v-else-if="msg.source === 'SENSENOVA'" class="source-pill ai">商汤 SenseNova 6.8</text>
               <text v-else class="source-pill ai">AI 智能推理</text>
+            </view>
+
+            <!-- Function Calling 状态指示卡片 -->
+            <view class="msg-tool-chip" v-if="msg.role === 'assistant' && msg.toolCall">
+              <text class="tool-chip-icon">🛠️</text>
+              <text class="tool-chip-text">
+                {{ msg.toolCall.status === 'CALLING' ? `正在调用【${formatToolName(msg.toolCall.toolName)}】查询...` : `已调取【${formatToolName(msg.toolCall.toolName)}】业务事实` }}
+              </text>
+              <text class="tool-chip-time" v-if="msg.toolCall.executionTimeMs">{{ msg.toolCall.executionTimeMs }}ms</text>
             </view>
 
             <view class="msg-bubble" :class="msg.role">
@@ -609,6 +678,23 @@ onUnmounted(() => {
   line-height: 1.4;
 }
 
+.personal-hint-box.unlogin {
+  background: linear-gradient(135deg, #fefce8 0%, #fff7ed 100%);
+  border: 1px solid #fed7aa;
+  cursor: pointer;
+}
+
+.personal-hint-box.unlogin .hint-text {
+  color: #9a3412;
+}
+
+.personal-hint-box .link-text {
+  color: #2563eb;
+  text-decoration: underline;
+  margin-left: 8rpx;
+  font-weight: 600;
+}
+
 .recommend-title {
   display: flex;
   align-items: center;
@@ -735,6 +821,12 @@ onUnmounted(() => {
   color: #065f46;
 }
 
+.source-pill.tool {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
 .source-pill.synth {
   background-color: #e0e7ff;
   color: #3730a3;
@@ -743,6 +835,36 @@ onUnmounted(() => {
 .source-pill.ai {
   background-color: #f1f5f9;
   color: #475569;
+}
+
+.msg-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12rpx;
+  padding: 8rpx 14rpx;
+  margin-bottom: 8rpx;
+  font-size: 22rpx;
+  color: #475569;
+}
+
+.tool-chip-icon {
+  font-size: 24rpx;
+}
+
+.tool-chip-text {
+  font-size: 22rpx;
+  color: #334155;
+}
+
+.tool-chip-time {
+  font-size: 20rpx;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
 }
 
 .msg-bubble {

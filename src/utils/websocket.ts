@@ -14,15 +14,15 @@ const WS_SUB_PROTOCOL_MARKER = 'satoken'
  * 获取当前环境的 WebSocket 服务器连接地址
  */
 function getWebSocketUrl(studentId: number | string): string {
-  let host = 'localhost'
-  // 若在 H5 环境下，取当前浏览器访问的域名/IP，支持局域网真机调试
+  // 若在 H5 环境下，直接通过当前域名端口 (由 Nginx 反向代理 WebSocket)
   // #ifdef H5
-  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    host = window.location.hostname
+  if (typeof window !== 'undefined' && window.location) {
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${wsProto}//${window.location.host}/api/ws/student/${studentId}`
   }
   // #endif
 
-  return `ws://${host}:8080/api/ws/student/${studentId}`
+  return `ws://localhost:8088/api/ws/student/${studentId}`
 }
 
 /**
