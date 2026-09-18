@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
+import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import { getGiftListApi, type GiftItem } from '@/api/gift'
@@ -11,15 +11,33 @@ const { userInfo } = storeToRefs(userStore)
 const currentTab = ref<'ALL' | 'AFFORDABLE' | 'FEATURED'>('ALL')
 const loading = ref(false)
 const giftList = ref<GiftItem[]>([])
+const page = ref(1)
+const pageSize = 12
+const hasMore = ref(true)
 
 const currentPoints = computed(() => userInfo.value.currentPoints || 0)
 
-const fetchGifts = async () => {
+const fetchGifts = async (reset = false) => {
+  if (loading.value) return
+  if (reset) {
+    page.value = 1
+    hasMore.value = true
+  }
+  if (!hasMore.value) return
+
   loading.value = true
   try {
-    const res: any = await getGiftListApi({ status: 1, page: 1, size: 50 })
-    const list = res?.records || (Array.isArray(res) ? res : [])
-    giftList.value = list
+    const res: any = await getGiftListApi({ status: 1, page: page.value, size: pageSize })
+    const list: GiftItem[] = res?.records || (Array.isArray(res) ? res : [])
+    if (reset) {
+      giftList.value = list
+    } else {
+      giftList.value = [...giftList.value, ...list]
+    }
+    hasMore.value = list.length >= pageSize
+    if (hasMore.value) {
+      page.value++
+    }
   } catch (err: any) {
     uni.showToast({ title: err.message || '获取礼品失败', icon: 'none' })
   } finally {
@@ -63,15 +81,21 @@ const goToRank = () => {
 }
 
 onPullDownRefresh(() => {
-  fetchGifts()
+  fetchGifts(true)
+})
+
+onReachBottom(() => {
+  if (!loading.value && hasMore.value) {
+    fetchGifts(false)
+  }
 })
 
 onShow(() => {
-  fetchGifts()
+  fetchGifts(true)
 })
 
 onMounted(() => {
-  fetchGifts()
+  fetchGifts(true)
 })
 </script>
 
@@ -185,10 +209,27 @@ onMounted(() => {
       <text class="empty-icon">📦</text>
       <text class="empty-text">当前暂无可兑换的礼品</text>
     </view>
+
+    <!-- 分页触底加载状态提示 -->
+    <view v-if="filteredGifts.length > 0" class="load-more-status">
+      <text v-if="loading" class="status-text">正在加载更多礼品...</text>
+      <text v-else-if="!hasMore" class="status-text">—— 到底了，共 {{ giftList.length }} 件上架礼品 ——</text>
+      <text v-else class="status-text" @click="fetchGifts(false)">上滑或点击加载更多</text>
+    </view>
   </view>
 </template>
 
 <style scoped>
+.load-more-status {
+  padding: 30rpx 0 20rpx;
+  text-align: center;
+}
+
+.status-text {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
 .gift-mall-container {
   min-height: 100vh;
   background-color: #f5f6f8;
