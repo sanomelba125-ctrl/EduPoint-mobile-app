@@ -242,10 +242,6 @@ const sendMessage = async (questionText?: string) => {
     }
 
     const payload: Record<string, any> = { question: text }
-    // 若未登录学籍，自动附带默认演示学号(张晓明 2023010401)，方便直观体验 Function Calling 真实数据查询
-    if (!token) {
-      payload.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
-    }
 
     const response = await fetch(`${baseUrl}/ai/chat/stream`, {
       method: 'POST',
@@ -422,7 +418,7 @@ onUnmounted(() => {
         <view class="personal-hint-box unlogin" v-else @click="goToLogin">
           <text class="hint-icon">🎓</text>
           <text class="hint-text">
-            当前以演示学生【张晓明 (2023010401)】快速体验 Function Calling。<text class="link-text">点此登录个人账号</text>
+            当前未登录，个人数据查询需要先登录。<text class="link-text">点此登录个人账号</text>
           </text>
         </view>
 
