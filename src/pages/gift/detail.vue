@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import {
   getGiftDetailApi,
+  getGiftExchangeTokenApi,
   exchangeGiftApi,
   generateExchangeRequestId,
   type GiftItem,
@@ -21,22 +22,28 @@ const quantity = ref(1)
 const submitting = ref(false)
 
 /**
+ * 服务端下发的防重兑换令牌 (P2-2 治理升级)：
+ * 进入页面时从服务端预申请（存 Redis，TTL 10min），提交时强制回传核验即焚，防重进页面重复下单
+ */
+const exchangeToken = ref<string>('')
+
+/**
  * 本次兑换意图的幂等标识：
  * 进入页面时生成一次，提交失败（含弱网中断后重试）复用同一个标识，避免服务端重复落单；
  * 兑换成功后重置，下一次兑换视为新的意图。
  */
 const requestId = ref<string>(generateExchangeRequestId())
 
-// 提货核验信息（默认带入学籍档案资料，亦支持编辑）
-const receiverName = ref(userInfo.value.name || '张晓明')
-const receiverPhone = ref(userInfo.value.phone || '13911110006')
+// 提货核验信息（默认带入学籍档案资料，若缺失留空由用户输入）
+const getValidName = (name?: string) => (name && name !== '未登录' ? name : '')
+const receiverName = ref(getValidName(userInfo.value?.name))
+const receiverPhone = ref(userInfo.value?.phone || '')
 const receiverAddress = ref('大学生活动中心一楼 102 创客服务台')
 
-import { watch } from 'vue'
 watch(
   () => userInfo.value,
   (val) => {
-    if (val && val.name) receiverName.value = val.name
+    if (val && val.name && val.name !== '未登录') receiverName.value = val.name
     if (val && val.phone) receiverPhone.value = val.phone
   },
   { immediate: true }
@@ -64,12 +71,26 @@ const canExchange = computed(() => {
   return true
 })
 
+const fetchToken = async () => {
+  if (!giftId.value) return
+  try {
+    const tokenRes = await getGiftExchangeTokenApi(giftId.value)
+    if (tokenRes && tokenRes.token) {
+      exchangeToken.value = tokenRes.token
+    }
+  } catch (e) {
+    console.warn('获取防重兑换令牌失败(将降级处理)', e)
+  }
+}
+
 const fetchDetail = async () => {
   if (!giftId.value) return
   loading.value = true
   try {
     const res = await getGiftDetailApi(giftId.value)
     gift.value = res
+    // P2-2 治理：进入页面时从服务端预申请防重 Token (Token 桶机制)
+    fetchToken()
   } catch (err: any) {
     uni.showToast({ title: err.message || '获取礼品详情失败', icon: 'none' })
   } finally {
@@ -120,6 +141,7 @@ const handleExchange = async () => {
       try {
         const result = await exchangeGiftApi({
           requestId: requestId.value,
+          exchangeToken: exchangeToken.value,
           giftId: gift.value!.id,
           quantity: quantity.value,
           receiverName: finalName,
@@ -127,8 +149,9 @@ const handleExchange = async () => {
           receiverAddress: finalAddress
         })
 
-        // 本次兑换意图已完成，重置幂等标识，下一次兑换使用新标识
+        // 本次兑换意图已完成，重置幂等标识，下一次兑换获取新标识与 Token
         requestId.value = generateExchangeRequestId()
+        fetchToken()
 
         // 核心亮点：全局更新 Pinia 中的用户可用积分
         userStore.updatePoints(-totalCost.value)
@@ -140,6 +163,8 @@ const handleExchange = async () => {
         showSuccessModal.value = true
       } catch (err: any) {
         uni.showToast({ title: err.message || '兑换失败，请稍后重试', icon: 'none' })
+        // 令牌可能已失效或被消耗，重试前自动刷新
+        fetchToken()
       } finally {
         submitting.value = false
       }

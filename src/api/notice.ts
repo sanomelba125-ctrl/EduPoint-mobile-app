@@ -14,13 +14,9 @@ export interface SysNoticeVO {
   createTime: string
 }
 
-export interface NoticePageResult {
-  records: SysNoticeVO[]
-  total: number
-  size: number
-  current: number
-  pages: number
-}
+import type { PageResult } from '@/types/common'
+
+export type NoticePageResult = PageResult<SysNoticeVO>
 
 /**
  * 分页查询学生端系统通知

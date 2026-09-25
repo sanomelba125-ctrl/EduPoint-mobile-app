@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import {
   getActivityPageApi,
@@ -199,11 +199,6 @@ onPullDownRefresh(() => {
 })
 
 onShow(() => {
-  fetchActivities()
-  fetchUnreadNoticeCount()
-})
-
-onMounted(() => {
   fetchActivities()
   fetchUnreadNoticeCount()
 })

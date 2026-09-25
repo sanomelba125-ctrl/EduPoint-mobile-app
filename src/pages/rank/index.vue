@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
@@ -75,10 +75,6 @@ onPullDownRefresh(() => {
 })
 
 onShow(() => {
-  fetchRank()
-})
-
-onMounted(() => {
   fetchRank()
 })
 </script>

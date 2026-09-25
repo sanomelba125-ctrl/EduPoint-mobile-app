@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app'
 import {
   getMyNoticesApi,
@@ -47,8 +47,7 @@ const fetchUnreadCount = async () => {
 
 // 筛选后用于展示的通知列表
 const filteredNoticeList = computed(() => {
-  if (activeTab.value === 'all') return noticeList.value
-  if (activeTab.value === 'unread') return noticeList.value.filter((n) => n.isRead === 0)
+  if (activeTab.value === 'all' || activeTab.value === 'unread') return noticeList.value
   if (activeTab.value === 'activity') {
     return noticeList.value.filter(
       (n) =>
@@ -66,7 +65,7 @@ const filteredNoticeList = computed(() => {
   return noticeList.value
 })
 
-// 分页拉取通知列表（拉取全量后由 computed 根据当前选中的 Tab 做分类与未读过滤，避免切换标签时数据被冲掉）
+// 分页拉取通知列表（支持后端 isRead 筛选，切换 Tab 时重置分页）
 const fetchNotices = async (reset = false) => {
   if (reset) {
     page.value = 1
@@ -76,9 +75,11 @@ const fetchNotices = async (reset = false) => {
 
   loading.value = true
   try {
+    const isReadParam = activeTab.value === 'unread' ? 0 : undefined
     const res = await getMyNoticesApi({
       page: page.value,
-      size: pageSize
+      size: pageSize,
+      isRead: isReadParam
     })
 
     const records = res?.records || []
@@ -104,10 +105,11 @@ const fetchNotices = async (reset = false) => {
   }
 }
 
-// 切换标签栏（响应式即时切换，不破坏已加载的通知列表缓存）
+// 切换标签栏（切换时重置分页向后端发起精准检索）
 const switchTab = (tab: TabType) => {
   if (activeTab.value === tab) return
   activeTab.value = tab
+  fetchNotices(true)
 }
 
 // 单条通知点击查看详情并标记已读
@@ -288,11 +290,6 @@ const formatTime = (timeStr?: string) => {
 }
 
 onShow(() => {
-  fetchUnreadCount()
-  fetchNotices(true)
-})
-
-onMounted(() => {
   fetchUnreadCount()
   fetchNotices(true)
 })

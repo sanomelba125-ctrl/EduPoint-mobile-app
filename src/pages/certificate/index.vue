@@ -161,8 +161,11 @@ const currentCert = computed(() => {
   return certList.value[currentIndex.value] || certList.value[0]
 })
 
-const studentName = computed(() => userStore.userInfo?.name || '张晓明')
-const studentNo = computed(() => userStore.userInfo?.studentNo || '2023010401')
+const studentName = computed(() => {
+  const name = userStore.userInfo?.name
+  return name && name !== '未登录' ? name : '同学'
+})
+const studentNo = computed(() => userStore.userInfo?.studentNo || '--')
 
 // 脱敏学生姓名
 const maskedStudentName = computed(() => {

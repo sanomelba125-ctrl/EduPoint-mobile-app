@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
@@ -91,10 +91,6 @@ onReachBottom(() => {
 })
 
 onShow(() => {
-  fetchGifts(true)
-})
-
-onMounted(() => {
   fetchGifts(true)
 })
 </script>

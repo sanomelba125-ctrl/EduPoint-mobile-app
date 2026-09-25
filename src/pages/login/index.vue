@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useUserStore } from '@/stores'
 import { studentLoginApi } from '@/api/auth'
+import { initStudentWebSocket } from '@/utils/websocket'
 
 const userStore = useUserStore()
 
@@ -45,6 +46,9 @@ const handleLogin = async () => {
     const profile = res.userInfo || res.student || res.studentInfo
     if (profile) {
       userStore.setUserInfo(profile)
+      if (profile.id) {
+        initStudentWebSocket(profile.id)
+      }
     }
     uni.showToast({ title: '学籍认证成功', icon: 'success' })
     setTimeout(() => {

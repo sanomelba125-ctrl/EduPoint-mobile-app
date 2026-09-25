@@ -21,6 +21,12 @@ export interface GiftExchangeParams {
    * 若调用方未传，API 层将自动生成兜底 UUID，确保出网请求必带有效标识。
    */
   requestId?: string
+  /**
+   * 服务端下发的防重兑换令牌 (P2-2 治理升级)。
+   * 进入商品详情页由 GET /gift/{id}/token 动态下发，存入 Redis，TTL 10min；
+   * 提交兑换时由服务端执行 Lua 脚本原子核验并销毁（一次性 Token 桶），防重进页面重复下单与重放攻击。
+   */
+  exchangeToken?: string
   giftId: number
   quantity: number
   receiverName?: string
@@ -70,12 +76,7 @@ export interface StudentGiftOrder {
   giftImage?: string
 }
 
-export interface PageResult<T> {
-  records: T[]
-  total: number
-  size: number
-  current: number
-}
+export type { PageResult } from '@/types/common'
 
 /**
  * 获取礼品列表 (GET /api/gift/list)
@@ -94,6 +95,23 @@ export function getGiftListApi(params?: { page?: number; size?: number; status?:
 export function getGiftDetailApi(id: number): Promise<GiftItem> {
   return request<GiftItem>({
     url: `/gift/${id}`,
+    method: 'GET'
+  })
+}
+
+export interface GiftExchangeTokenResult {
+  token: string
+  giftId: number
+  expireSeconds: number
+  createTime?: string
+}
+
+/**
+ * 学生进入礼品详情页获取防重兑换令牌 (GET /api/gift/{id}/token)
+ */
+export function getGiftExchangeTokenApi(id: number): Promise<GiftExchangeTokenResult> {
+  return request<GiftExchangeTokenResult>({
+    url: `/gift/${id}/token`,
     method: 'GET'
   })
 }

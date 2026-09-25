@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import {
@@ -61,8 +61,8 @@ const handleCancelOrder = (order: StudentGiftOrder) => {
       if (!res.confirm) return
       try {
         await cancelMyOrderApi(order.id)
-        // 核心亮点：全局更新 Pinia 中的用户可用积分，实时返还
-        userStore.updatePoints(order.pointsCost)
+        // 核心修复：仅返还用户可用积分(currentPoints)，严禁虚增历史总积分(totalPoints)
+        userStore.refundPoints(order.pointsCost)
         uni.showToast({
           title: `订单已取消，+${order.pointsCost} pts 已原路退回！`,
           icon: 'none'
@@ -80,10 +80,6 @@ onPullDownRefresh(() => {
 })
 
 onShow(() => {
-  fetchOrders()
-})
-
-onMounted(() => {
   fetchOrders()
 })
 </script>

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { initStudentWebSocket, closeStudentWebSocket } from '@/utils/websocket'
+import { closeStudentWebSocket } from '@/utils/websocket'
 
 export interface StudentUserInfo {
   id: number | null
@@ -55,25 +55,29 @@ export const useUserStore = defineStore('user', () => {
     uni.setStorageSync('student_token', newToken)
   }
 
-  // 设置用户信息
+  // 设置用户信息（纯状态更新，严禁在此隐式绑定网络建联副作用）
   const setUserInfo = (info: Partial<StudentUserInfo>) => {
     userInfo.value = {
       ...userInfo.value,
       ...info
     }
     uni.setStorageSync('student_info', JSON.stringify(userInfo.value))
-    if (userInfo.value.id) {
-      initStudentWebSocket(userInfo.value.id)
-    }
   }
 
   // 变动积分（如兑换礼品扣除负数、活动签到奖励正数）
   // 核心优势：修改此状态后，整个移动端所有页面（商城、个人中心、首页）积分实时同步！
-  const updatePoints = (delta: number) => {
+  const updatePoints = (delta: number, affectTotal: boolean = true) => {
     userInfo.value.currentPoints = Math.max(0, (userInfo.value.currentPoints || 0) + delta)
-    if (delta > 0) {
+    if (delta > 0 && affectTotal) {
       userInfo.value.totalPoints = (userInfo.value.totalPoints || 0) + delta
     }
+    uni.setStorageSync('student_info', JSON.stringify(userInfo.value))
+  }
+
+  // 退款/撤销扣减：只返还当前可用积分，绝不污染或虚增历史累计总积分(totalPoints)
+  const refundPoints = (points: number) => {
+    const validPoints = Math.max(0, points || 0)
+    userInfo.value.currentPoints = (userInfo.value.currentPoints || 0) + validPoints
     uni.setStorageSync('student_info', JSON.stringify(userInfo.value))
   }
 
@@ -93,6 +97,7 @@ export const useUserStore = defineStore('user', () => {
     setToken,
     setUserInfo,
     updatePoints,
+    refundPoints,
     logout
   }
 })

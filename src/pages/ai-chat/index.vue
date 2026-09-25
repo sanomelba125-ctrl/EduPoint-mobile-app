@@ -42,7 +42,7 @@ const isGenerating = ref(false)
 const isLoadingHistory = ref(false)
 const recommendedFaqs = ref<AiFaqItem[]>([])
 const scrollIntoViewId = ref('')
-const currentAbortController = ref<AbortController | null>(null)
+const currentAbortController = ref<{ abort: () => void } | null>(null)
 
 // 格式化时间
 const formatTime = () => {
@@ -58,8 +58,8 @@ const fetchChatHistory = async () => {
     isLoadingHistory.value = true
     const token = uni.getStorageSync('student_token')
     const params: Record<string, any> = { limit: 50 }
-    if (!token) {
-      params.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
+    if (!token && userStore.userInfo?.studentNo) {
+      params.simulateStudentNo = userStore.userInfo.studentNo
     }
     const historyList = await getChatHistoryApi(params)
     if (historyList && historyList.length > 0) {
@@ -149,8 +149,8 @@ const handleClearChat = () => {
         try {
           const token = uni.getStorageSync('student_token')
           const params: Record<string, any> = {}
-          if (!token) {
-            params.simulateStudentNo = userStore.userInfo?.studentNo || '2023010401'
+          if (!token && userStore.userInfo?.studentNo) {
+            params.simulateStudentNo = userStore.userInfo.studentNo
           }
           await clearChatHistoryApi(params)
           messages.value = []
@@ -221,8 +221,6 @@ const sendMessage = async (questionText?: string) => {
   // 3. 构建原生 Fetch SSE 请求
   try {
     const token = uni.getStorageSync('student_token')
-    const controller = new AbortController()
-    currentAbortController.value = controller
 
     // 动态解析后端地址 (H5 环境直接使用同源相对路径 /api，彻底规避跨域与本地 8080 端口冲突)
     let baseUrl = ''
@@ -242,6 +240,64 @@ const sendMessage = async (questionText?: string) => {
     }
 
     const payload: Record<string, any> = { question: text }
+
+    const processSSELine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith(':')) return
+
+      if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+        assistantMsg.isStreaming = false
+        if (messages.value[assistantIndex]) {
+          messages.value[assistantIndex].isStreaming = false
+        }
+        return
+      }
+
+      if (trimmed.startsWith('data:')) {
+        const jsonStr = trimmed.substring(5).trim()
+        try {
+          const data = JSON.parse(jsonStr)
+          if (data.content) {
+            assistantMsg.content += data.content
+            if (messages.value[assistantIndex]) {
+              messages.value[assistantIndex].content = assistantMsg.content
+            }
+          }
+          if (data.source) {
+            assistantMsg.source = data.source
+            if (messages.value[assistantIndex]) {
+              messages.value[assistantIndex].source = data.source
+            }
+          }
+          if (data.toolCall) {
+            assistantMsg.toolCall = {
+              toolName: data.toolCall.toolName,
+              description: data.toolCall.description,
+              status: data.toolCall.status,
+              arguments: data.toolCall.argumentsJson || data.toolCall.arguments,
+              resultFactJson: data.toolCall.resultFactJson,
+              executionTimeMs: data.toolCall.executionTimeMs
+            }
+            if (messages.value[assistantIndex]) {
+              messages.value[assistantIndex].toolCall = assistantMsg.toolCall
+            }
+          }
+          if (data.finish) {
+            assistantMsg.isStreaming = false
+            if (messages.value[assistantIndex]) {
+              messages.value[assistantIndex].isStreaming = false
+            }
+          }
+          scrollToBottom()
+        } catch (e) {
+          // 忽略碎片 json 解析异常
+        }
+      }
+    }
+
+    // #ifdef H5
+    const controller = new AbortController()
+    currentAbortController.value = controller
 
     const response = await fetch(`${baseUrl}/ai/chat/stream`, {
       method: 'POST',
@@ -271,59 +327,65 @@ const sendMessage = async (questionText?: string) => {
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith(':')) continue
-
-        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
-          assistantMsg.isStreaming = false
-          if (messages.value[assistantIndex]) {
-            messages.value[assistantIndex].isStreaming = false
-          }
-          break
-        }
-
-        if (trimmed.startsWith('data:')) {
-          const jsonStr = trimmed.substring(5).trim()
-          try {
-            const data = JSON.parse(jsonStr)
-            if (data.content) {
-              assistantMsg.content += data.content
-              if (messages.value[assistantIndex]) {
-                messages.value[assistantIndex].content = assistantMsg.content
-              }
-            }
-            if (data.source) {
-              assistantMsg.source = data.source
-              if (messages.value[assistantIndex]) {
-                messages.value[assistantIndex].source = data.source
-              }
-            }
-            if (data.toolCall) {
-              assistantMsg.toolCall = {
-                toolName: data.toolCall.toolName,
-                description: data.toolCall.description,
-                status: data.toolCall.status,
-                arguments: data.toolCall.argumentsJson || data.toolCall.arguments,
-                resultFactJson: data.toolCall.resultFactJson,
-                executionTimeMs: data.toolCall.executionTimeMs
-              }
-              if (messages.value[assistantIndex]) {
-                messages.value[assistantIndex].toolCall = assistantMsg.toolCall
-              }
-            }
-            if (data.finish) {
-              assistantMsg.isStreaming = false
-              if (messages.value[assistantIndex]) {
-                messages.value[assistantIndex].isStreaming = false
-              }
-            }
-            scrollToBottom()
-          } catch (e) {
-            // 忽略碎片 json 解析异常
-          }
-        }
+        processSSELine(line)
       }
     }
+    // #endif
+
+    // #ifndef H5
+    await new Promise<void>((resolve, reject) => {
+      let chunkBuffer = ''
+      const requestTask = uni.request({
+        url: `${baseUrl}/ai/chat/stream`,
+        method: 'POST',
+        header: headers,
+        data: payload,
+        enableChunkReceived: true,
+        responseType: 'text',
+        success: (res) => {
+          if (typeof res.data === 'string' && res.data.includes('data:')) {
+            const lines = res.data.split('\n')
+            for (const line of lines) {
+              processSSELine(line)
+            }
+          }
+          resolve()
+        },
+        fail: (err) => {
+          reject(err)
+        }
+      })
+
+      currentAbortController.value = {
+        abort: () => {
+          requestTask.abort()
+        }
+      }
+
+      if (typeof (requestTask as any).onChunkReceived === 'function') {
+        (requestTask as any).onChunkReceived((chunkRes: any) => {
+          let textChunk = ''
+          if (typeof chunkRes.data === 'string') {
+            textChunk = chunkRes.data
+          } else if (chunkRes.data instanceof ArrayBuffer) {
+            const uint8 = new Uint8Array(chunkRes.data)
+            if (typeof TextDecoder !== 'undefined') {
+              textChunk = new TextDecoder('utf-8').decode(uint8)
+            } else {
+              textChunk = decodeURIComponent(escape(String.fromCharCode(...uint8)))
+            }
+          }
+
+          chunkBuffer += textChunk
+          const lines = chunkBuffer.split('\n')
+          chunkBuffer = lines.pop() || ''
+          for (const line of lines) {
+            processSSELine(line)
+          }
+        })
+      }
+    })
+    // #endif
   } catch (err: any) {
     if (err.name === 'AbortError') {
       logInfo('用户主动中断回答')

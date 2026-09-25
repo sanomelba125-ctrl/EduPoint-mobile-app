@@ -1,5 +1,5 @@
 import request, { type ApiError } from '@/utils/request'
-import type { PageResult } from './gift'
+import type { PageResult } from '@/types/common'
 
 export interface ActivityItem {
   id: number
