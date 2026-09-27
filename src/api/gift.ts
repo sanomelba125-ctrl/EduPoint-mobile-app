@@ -76,7 +76,9 @@ export interface StudentGiftOrder {
   giftImage?: string
 }
 
-export type { PageResult } from '@/types/common'
+import type { PageResult } from '@/types/common'
+
+export type { PageResult }
 
 /**
  * 获取礼品列表 (GET /api/gift/list)

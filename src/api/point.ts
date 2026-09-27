@@ -42,7 +42,9 @@ export interface StudentPointRecordVO {
   createTime: string
 }
 
-export type { PageResult } from '@/types/common'
+import type { PageResult } from '@/types/common'
+
+export type { PageResult }
 
 /**
  * 查询学生当前可用积分与历史累计学分 (GET /api/student/score/balance)
