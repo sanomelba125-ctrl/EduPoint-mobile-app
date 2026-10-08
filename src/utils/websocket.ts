@@ -22,6 +22,20 @@ function getWebSocketUrl(studentId: number | string): string {
   }
   // #endif
 
+  // 非 H5 (小程序 / App): 优先从本地配置或环境变量提取 WS 基地址
+  const customWs = uni.getStorageSync('ws_base_url')
+  if (customWs) {
+    return `${customWs}/student/${studentId}`
+  }
+  if (import.meta.env.VITE_APP_WS_URL) {
+    return `${import.meta.env.VITE_APP_WS_URL}/student/${studentId}`
+  }
+  const appBaseUrl = import.meta.env.VITE_APP_BASE_URL as string
+  if (appBaseUrl && appBaseUrl.startsWith('http')) {
+    const wsBase = appBaseUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '/api/ws')
+    return `${wsBase}/student/${studentId}`
+  }
+
   return `ws://localhost:8080/api/ws/student/${studentId}`
 }
 

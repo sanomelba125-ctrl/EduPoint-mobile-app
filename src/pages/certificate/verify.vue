@@ -32,18 +32,21 @@
       <view class="quick-tags">
         <text class="quick-title">快捷体验：</text>
         <text class="tag-link" @click="selectTag('CERT-2026-ACT2-A89F3B12')">有效证书</text>
-        <text class="tag-link danger" @click="selectTag('CERT-2026-ACT3-REVOKED01')">已撤销证书</text>
+        <text class="tag-link danger" @click="selectTag('CERT-114516-6-6EF1DD1C')">已撤销证书</text>
       </view>
     </view>
 
     <!-- 核验结果展示 -->
     <view v-if="result" class="result-wrap">
-      <view class="result-card" :class="{ revoked: result.status === 2 }">
+      <view class="result-card" :class="{ revoked: result.status === 2, expired: result.status === 3 }">
         <!-- 头部状态标识 -->
         <view class="status-banner">
           <view class="status-badge-icon">
             <svg v-if="result.status === 1" viewBox="0 0 24 24" width="28" height="28" fill="#16a34a">
               <path d="M12 1L3 5V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V5L12 1M10 16.5L6 12.5L7.41 11.09L10 13.67L16.59 7.08L18 8.5L10 16.5Z"/>
+            </svg>
+            <svg v-else-if="result.status === 3" viewBox="0 0 24 24" width="28" height="28" fill="#f59e0b">
+              <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/>
             </svg>
             <svg v-else viewBox="0 0 24 24" width="28" height="28" fill="#dc2626">
               <path d="M12,2C17.53,2 22,6.47 22,12C22,17.53 17.53,22 12,22C6.47,22 2,17.53 2,12C2,6.47 6.47,2 12,2M15.59,7L12,10.59L8.41,7L7,8.41L10.59,12L7,15.59L8.41,17L12,13.41L15.59,17L17,15.59L13.41,12L17,8.41L15.59,7Z"/>
@@ -52,7 +55,7 @@
           <view class="status-texts">
             <text class="status-main">{{ result.statusText }}</text>
             <text class="status-sub">
-              {{ result.status === 1 ? '官方数字签名校验通过，该凭证真实受保' : '校方已撤销作废该荣誉凭证' }}
+              {{ result.status === 1 ? '官方数字签名校验通过，该凭证真实受保' : (result.status === 3 ? '该荣誉凭证已超过有效保护期限' : '校方已撤销作废该荣誉凭证') }}
             </text>
           </view>
         </view>
@@ -122,8 +125,8 @@ const loading = ref(false)
 const result = ref<VerifyCertificateResult | null>(null)
 
 onLoad((options: any) => {
-  if (options && options.no) {
-    inputCode.value = decodeURIComponent(options.no)
+  if (options && (options.no || options.certificateNo)) {
+    inputCode.value = decodeURIComponent(options.no || options.certificateNo)
   }
 })
 

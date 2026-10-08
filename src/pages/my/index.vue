@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
-import { getStudentProfileApi, updateStudentProfileApi, changeStudentPasswordApi } from '@/api/auth'
+import { getStudentProfileApi, updateStudentProfileApi, changeStudentPasswordApi, studentLogoutApi } from '@/api/auth'
 import { getMyOrdersApi } from '@/api/gift'
 import { getUnreadNoticeCountApi } from '@/api/notice'
 
@@ -202,6 +202,7 @@ const handleLogout = () => {
     cancelText: '取消',
     success: (res) => {
       if (res.confirm) {
+        studentLogoutApi().catch(() => {})
         userStore.logout()
         uni.showToast({ title: '已退出登录', icon: 'none' })
         setTimeout(() => {

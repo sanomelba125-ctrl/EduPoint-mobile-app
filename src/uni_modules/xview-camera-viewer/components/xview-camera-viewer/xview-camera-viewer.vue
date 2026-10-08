@@ -407,6 +407,13 @@ const toggleTorch = async () => {
   }
   // #endif
 
+  // #ifdef MP-WEIXIN
+  if (currentDevicePosition.value === 'front') {
+    uni.showToast({ title: '前置摄像头不支持补光灯', icon: 'none' })
+    return
+  }
+  // #endif
+
   flashActive.value = !flashActive.value
   emit('torchChange', flashActive.value)
   uni.showToast({
@@ -553,7 +560,7 @@ defineExpose({
         v-if="cameraActive"
         class="xview-native-camera-elem"
         :device-position="currentDevicePosition"
-        flash="off"
+        :flash="flashActive ? 'torch' : 'off'"
         mode="scanCode"
         @scancode="onWxScanCode"
         @error="onWxCameraError"

@@ -6,6 +6,8 @@ import {
   signupActivityApi,
   cancelSignupActivityApi,
   getActivityStatusInfo,
+  isActivityFull,
+  promptCancelSignupModal,
   type ActivityItem,
   type ActivityStatusInfo
 } from '@/api/activity'
@@ -639,12 +641,11 @@ const enrolledCount = computed(() => {
 })
 
 const isFull = computed(() => {
-  if (!activity.value) return false
-  return enrolledCount.value >= (activity.value.registrationLimit || 1)
+  return isActivityFull(activity.value)
 })
 
 const progressPercent = computed(() => {
-  if (!activity.value || !activity.value.registrationLimit) return 0
+  if (!activity.value || !activity.value.registrationLimit || activity.value.registrationLimit <= 0) return 0
   return Math.min(100, Math.round((enrolledCount.value / activity.value.registrationLimit) * 100))
 })
 
@@ -686,25 +687,7 @@ const handleEnrollAction = async () => {
   }
 
   if (myStatus.value === 'WAITLIST') {
-    uni.showModal({
-      title: '退出候补队列',
-      content: '确认退出当前候补排队吗？退出后若重新候补需要重新按顺序排队。',
-      confirmText: '退出候补',
-      cancelText: '再想想',
-      success: async (mRes) => {
-        if (!mRes.confirm) return
-        submitting.value = true
-        try {
-          await cancelSignupActivityApi(act.id)
-          uni.showToast({ title: '已退出候补队列', icon: 'success' })
-          fetchDetail(true)
-        } catch (err: any) {
-          uni.showToast({ title: getApiErrorMessage(err, '退出候补失败'), icon: 'none' })
-        } finally {
-          submitting.value = false
-        }
-      }
-    })
+    handleCancelSignup()
     return
   }
 
@@ -762,16 +745,10 @@ const handleCancelSignup = () => {
   const act = activity.value
   const isWait = myStatus.value === 'WAITLIST'
 
-  uni.showModal({
-    title: isWait ? '退出候补确认' : '取消报名确认',
-    content: isWait
-      ? '确定要退出当前活动的候补排队吗？退出后若重新候补需要重新排队。'
-      : '确定要取消本次活动正式报名吗？取消后名额将自动释放并顺延给候补队列排第 1 位的同学。',
-    confirmText: isWait ? '退出候补' : '确认取消',
-    cancelText: isWait ? '再想想' : '保留名额',
-    confirmColor: '#f56c6c',
-    success: async (mRes) => {
-      if (!mRes.confirm) return
+  promptCancelSignupModal({
+    title: act.title,
+    isWaitlist: isWait,
+    onConfirm: async () => {
       submitting.value = true
       try {
         const message = await cancelSignupActivityApi(act.id)
@@ -807,10 +784,19 @@ onPullDownRefresh(async () => {
 })
 
 onShow(() => {
+  // 页面重新展示时，若处于导航模式则恢复定位追踪轮询
+  if (isNavigating.value) {
+    startLocationTracking()
+  }
   // 页面重新展示时，若尚未拉取过活动数据则加载，避免高频轮询引起持续刷新
   if (!activity.value && activityId.value) {
     fetchDetail()
   }
+})
+
+onHide(() => {
+  // 离开当前页面（如跳转至打卡页）时立即暂停定位追踪轮询，防止后台持续占用资源
+  stopLocationTracking()
 })
 
 onUnload(() => {

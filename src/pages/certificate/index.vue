@@ -147,6 +147,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getMyCertificatesApi, type MyCertificateItem } from '@/api/certificate'
 
@@ -155,6 +156,8 @@ const userStore = useUserStore()
 const certList = ref<MyCertificateItem[]>([])
 const currentIndex = ref(0)
 const verifyModalVisible = ref(false)
+const targetActivityId = ref<number | null>(null)
+const targetCertNo = ref<string>('')
 
 const currentCert = computed(() => {
   if (certList.value.length === 0) return null
@@ -180,6 +183,17 @@ const loadCertificates = async () => {
   try {
     const list = await getMyCertificatesApi()
     certList.value = list
+    // 若路由传入了目标活动ID或证书号，自动高亮并切换到对应证书
+    if (targetActivityId.value || targetCertNo.value) {
+      const idx = list.findIndex(item => {
+        if (targetActivityId.value && item.activityId === targetActivityId.value) return true
+        if (targetCertNo.value && item.certificateNo === targetCertNo.value) return true
+        return false
+      })
+      if (idx !== -1) {
+        currentIndex.value = idx
+      }
+    }
   } catch (err: any) {
     uni.showToast({ title: '加载证书失败', icon: 'none' })
   }
@@ -224,6 +238,15 @@ const handleSaveToAlbum = () => {
     })
   }, 600)
 }
+
+onLoad((query: any) => {
+  if (query?.activityId) {
+    targetActivityId.value = Number(query.activityId)
+  }
+  if (query?.no || query?.certificateNo) {
+    targetCertNo.value = decodeURIComponent(query.no || query.certificateNo)
+  }
+})
 
 onMounted(() => {
   loadCertificates()

@@ -6,7 +6,8 @@ const getBaseUrl = (): string => {
   return '/api'
   // #endif
   // #ifndef H5
-  return (import.meta.env.VITE_APP_BASE_URL as string) || 'http://localhost:8080/api'
+  const custom = uni.getStorageSync('api_base_url')
+  return custom || (import.meta.env.VITE_APP_BASE_URL as string) || 'http://localhost:8080/api'
   // #endif
 }
 const BASE_URL = getBaseUrl()

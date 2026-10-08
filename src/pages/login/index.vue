@@ -10,7 +10,10 @@ const studentNo = ref('')
 const password = ref('')
 const loading = ref(false)
 
-// 一键填入系统内置学生账号 (提供预置测试账号快捷填充)
+// 仅在非生产环境或显式配置时展示快捷体验按钮
+const isDemoMode = import.meta.env.MODE !== 'production' || import.meta.env.VITE_ENABLE_DEMO_ACCOUNTS === 'true'
+
+// 一键填入系统内置演示学生账号
 const fillStudent = (no: string, pwd = '123456') => {
   studentNo.value = no
   password.value = pwd
@@ -129,8 +132,8 @@ const handleLogin = async () => {
     </view>
 
     <!-- 快捷演示填充按钮 -->
-    <view class="quick-prefill-wrap">
-      <view class="prefill-title">快捷载入系统内置学生体验：</view>
+    <view class="quick-prefill-wrap" v-if="isDemoMode">
+      <view class="prefill-title">快捷体验（演示环境默认密码 123456）：</view>
       <view class="prefill-btns-row">
         <button class="prefill-btn active-gold" @click="fillStudent('2023010401')">
           👑 榜首：张晓明 (420分)

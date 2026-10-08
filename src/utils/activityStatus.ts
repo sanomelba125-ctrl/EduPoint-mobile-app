@@ -23,6 +23,26 @@ export interface ActivityStatusInfo {
 }
 
 /**
+ * 统一判定活动是否已满额
+ * 契约规范对齐后端数据库定义 (V1.0.0__init.sql: registration_limit 0 表示不限制人数)：
+ * 1. registrationLimit <= 0 表示不限制人数，永远不满额
+ * 2. 仅当 registrationLimit > 0 且 报名/参与人数 >= registrationLimit 时判定为满额
+ */
+export function isActivityFull(act?: Partial<ActivityItem> | any | null): boolean {
+  if (!act) return false
+  const limit = act.registrationLimit !== undefined && act.registrationLimit !== null
+    ? Number(act.registrationLimit)
+    : 0
+  if (limit <= 0) return false
+
+  const enrolled = (act as any).participantCount !== undefined && (act as any).participantCount !== null
+    ? Number((act as any).participantCount)
+    : (act.enrolledCount !== undefined && act.enrolledCount !== null ? Number(act.enrolledCount) : 0)
+
+  return enrolled >= limit
+}
+
+/**
  * 解析活动生命周期状态及按钮功能态 (对照 UI 原型规范，去除中括号状态前缀)
  */
 export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatusInfo {
@@ -65,8 +85,7 @@ export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatus
   }
 
   const myStatus = act.myEnrollmentStatus || 'NONE'
-  const enrolled = (act as any).participantCount !== undefined ? (act as any).participantCount : (act.enrolledCount !== undefined ? act.enrolledCount : 0)
-  const isFull = enrolled >= act.registrationLimit
+  const isFull = isActivityFull(act)
 
   // 2. 确定顶部徽章状态文本 (与原型一致)
   let statusLabel = '报名中'
@@ -293,4 +312,32 @@ export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatus
     disabled: true,
     canCancel: false
   }
+}
+
+export interface PromptCancelSignupOptions {
+  title?: string
+  isWaitlist: boolean
+  onConfirm: () => void | Promise<void>
+}
+
+/**
+ * 统一弹出取消报名/退出候补确认弹窗
+ * 收敛两端页面重复的弹窗文案、确认按钮色调与交互
+ */
+export function promptCancelSignupModal(options: PromptCancelSignupOptions) {
+  const isWait = options.isWaitlist
+  const actName = options.title ? `「${options.title}」` : '当前活动'
+  uni.showModal({
+    title: isWait ? '退出候补确认' : '取消报名确认',
+    content: isWait
+      ? `确定退出${actName}的候补排队吗？退出后若重新候补需要重新按顺序排队。`
+      : `确定取消${actName}的正式报名吗？取消后名额将自动释放并顺延给排队候补的同学。`,
+    confirmText: isWait ? '退出候补' : '确认取消',
+    confirmColor: '#f56c6c',
+    cancelText: isWait ? '再想想' : '保留名额',
+    success: async (res) => {
+      if (!res.confirm) return
+      await options.onConfirm()
+    }
+  })
 }

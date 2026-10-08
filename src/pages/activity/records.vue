@@ -69,12 +69,9 @@ const goToDetail = (actId: number) => {
   })
 }
 
-const viewCert = (title: string, certTitle?: string) => {
-  uni.showModal({
-    title: '荣誉电子证书',
-    content: `活动「${title}」出勤合格，已获得证书：\n${certTitle || '校园综合实践结业证书'}\n证书编号：CERT-2026-ONLINE`,
-    showCancel: false,
-    confirmText: '我知道了'
+const viewCert = () => {
+  uni.navigateTo({
+    url: '/pages/certificate/index'
   })
 }
 

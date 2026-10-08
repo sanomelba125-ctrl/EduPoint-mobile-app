@@ -33,6 +33,7 @@ const distanceToCenter = ref<number | null>(null)
 const isWithinRadius = ref<boolean>(false)
 const amapAddress = ref<string>('正在获取设备真实 GPS 定位...')
 const amapLoading = ref<boolean>(false)
+const isMockLocationActive = ref<boolean>(false)
 
 // 考勤成功结果弹窗
 const showSuccessModal = ref(false)
@@ -75,21 +76,23 @@ const updateGpsDistance = async (silent = false): Promise<boolean> => {
     currentLat.value = loc.latitude
     currentLon.value = loc.longitude
     amapAddress.value = loc.formattedAddress
+    isMockLocationActive.value = false
     calcDist()
     if (!silent) {
       uni.showToast({ title: 'GPS 定位已更新', icon: 'success' })
     }
     return true
   } catch (err: any) {
-    console.warn('获取硬件 GPS 定位受限，同步活动现场基准坐标:', err)
-    // 在无独立 GPS 硬件或权限受限的 PC 环境，同步活动预设基准位置
-    if (activity.value?.latitude && activity.value?.longitude) {
+    console.warn('获取硬件 GPS 定位受限:', err)
+    // 仅在明确开启开发模式模拟定位时允许回退基准坐标，生产环境严格执行 fail-closed 防止作弊
+    if (import.meta.env.VITE_ENABLE_MOCK_LOCATION === 'true' && activity.value?.latitude && activity.value?.longitude) {
       currentLat.value = Number(activity.value.latitude)
       currentLon.value = Number(activity.value.longitude)
-      amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动考勤基准点'
+      amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动考勤基准点(测试模拟)'
+      isMockLocationActive.value = true
       calcDist()
       if (!silent) {
-        uni.showToast({ title: '已同步考勤坐标', icon: 'success' })
+        uni.showToast({ title: '已同步考勤模拟坐标(仅开发调试)', icon: 'none' })
       }
       return true
     }
@@ -97,9 +100,10 @@ const updateGpsDistance = async (silent = false): Promise<boolean> => {
     currentLon.value = null
     distanceToCenter.value = null
     isWithinRadius.value = false
-    amapAddress.value = '未获取到有效定位，请检查浏览器定位权限'
+    isMockLocationActive.value = false
+    amapAddress.value = '未获取到现场 GPS 定位，请检查设备定位权限'
     if (!silent) {
-      uni.showToast({ title: getApiErrorMessage(err, '获取定位失败'), icon: 'none' })
+      uni.showToast({ title: getApiErrorMessage(err, '获取现场定位失败，请允许定位权限'), icon: 'none' })
     }
     return false
   } finally {
@@ -175,14 +179,7 @@ const parseQrPayload = (qrRawText: string): ParsedQrData => {
         }
         if (parsed.activityId) targetAid = Number(parsed.activityId)
         else if (parsed.actId) targetAid = Number(parsed.actId)
-        else if (parsed.id) targetAid = Number(parsed.id)
-
-        if (parsed.checkinLatitude !== undefined && parsed.checkinLatitude !== null) {
-          currentLat.value = Number(parsed.checkinLatitude)
-        }
-        if (parsed.checkinLongitude !== undefined && parsed.checkinLongitude !== null) {
-          currentLon.value = Number(parsed.checkinLongitude)
-        }
+        // 注意：经纬度定位严格来源于设备硬件定位传感，杜绝从二维码载荷反向注入伪造坐标
       }
     } catch {
       const nonceMatch = text.match(/["']?nonce["']?\s*:\s*["']([^"']+)["']/i)
@@ -313,11 +310,20 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
       sign: qrSign.trim()
     }
 
-    // 正确使用 GPS 定位将经纬度传入后端
+    // 若活动启用了现场地理围栏强校验，提交前强制检查设备合法 GPS
+    if (activity.value?.locationCheckEnabled) {
+      if (currentLat.value === null || currentLon.value === null || !isValidCoordinatePair(currentLon.value, currentLat.value)) {
+        uni.hideLoading()
+        uni.showToast({ title: '未获取到现场 GPS 定位，无法打卡', icon: 'none' })
+        return
+      }
+    }
+
+    // 正确使用 GPS 硬件定位将经纬度传入后端
     if (currentLat.value !== null && currentLon.value !== null && isValidCoordinatePair(currentLon.value, currentLat.value)) {
       payload.checkinLatitude = currentLat.value
       payload.checkinLongitude = currentLon.value
-    } else if (activity.value?.latitude && activity.value?.longitude) {
+    } else if (import.meta.env.VITE_ENABLE_MOCK_LOCATION === 'true' && activity.value?.latitude && activity.value?.longitude) {
       payload.checkinLatitude = Number(activity.value.latitude)
       payload.checkinLongitude = Number(activity.value.longitude)
     }
@@ -355,12 +361,10 @@ const goBackHall = () => {
 const goToCertificates = () => {
   showSuccessModal.value = false
   cameraViewerRef.value?.stopCamera()
-  uni.showModal({
-    title: '荣誉电子证书',
-    content: `已成功为您颁发「${activity.value?.certificateTitle || '学术实训结业证书'}」！\n可在个人中心随时查看与核验导出。`,
-    showCancel: false,
-    confirmText: '我知道了',
-    success: () => {
+  const aid = activity.value?.id || actId.value
+  uni.navigateTo({
+    url: `/pages/certificate/index?activityId=${aid}`,
+    fail: () => {
       uni.switchTab({ url: '/pages/activity/index' })
     }
   })
@@ -454,7 +458,9 @@ onLoad(async (query: any) => {
               <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
             </svg>
             <text class="amap-brand-title">考勤 GPS 定位</text>
-            <text class="amap-tag-pill">硬件定位</text>
+            <text class="amap-tag-pill" :class="{ 'amap-tag-mock': isMockLocationActive }">
+              {{ isMockLocationActive ? '模拟坐标(调试)' : '硬件定位' }}
+            </text>
           </view>
           <view class="amap-mode-tabs">
             <view
@@ -697,6 +703,12 @@ onLoad(async (query: any) => {
   background-color: rgba(56, 189, 248, 0.15);
   color: #38bdf8;
   font-weight: 600;
+}
+
+.amap-tag-pill.amap-tag-mock {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px dashed rgba(251, 191, 36, 0.6);
 }
 
 .amap-mode-tabs {

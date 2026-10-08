@@ -295,9 +295,16 @@ const sendMessage = async (questionText?: string) => {
       }
     }
 
+    let isManualAbort = false
+
     // #ifdef H5
     const controller = new AbortController()
-    currentAbortController.value = controller
+    currentAbortController.value = {
+      abort: () => {
+        isManualAbort = true
+        controller.abort()
+      }
+    }
 
     const response = await fetch(`${baseUrl}/ai/chat/stream`, {
       method: 'POST',
@@ -335,15 +342,63 @@ const sendMessage = async (questionText?: string) => {
     // #ifndef H5
     await new Promise<void>((resolve, reject) => {
       let chunkBuffer = ''
+      let pendingBytes: number[] = []
+      let hasReceivedChunks = false
+
+      // 流式 UTF-8 解码：保留未收齐的多字节尾部，彻底杜绝跨块中文乱码或 URIError 崩溃
+      const decodeStreamBytes = (uint8: Uint8Array): string => {
+        const allBytes = pendingBytes.length > 0
+          ? new Uint8Array([...pendingBytes, ...uint8])
+          : uint8
+        pendingBytes = []
+
+        let validEnd = allBytes.length
+        for (let i = Math.max(0, allBytes.length - 4); i < allBytes.length; i++) {
+          const byte = allBytes[i]
+          let needed = 0
+          if ((byte & 0x80) === 0) {
+            needed = 1
+          } else if ((byte & 0xE0) === 0xC0) {
+            needed = 2
+          } else if ((byte & 0xF0) === 0xE0) {
+            needed = 3
+          } else if ((byte & 0xF8) === 0xF0) {
+            needed = 4
+          }
+          if (needed > 0 && i + needed > allBytes.length) {
+            pendingBytes = Array.from(allBytes.subarray(i))
+            validEnd = i
+            break
+          }
+        }
+
+        if (validEnd === 0) return ''
+        const slice = allBytes.subarray(0, validEnd)
+        if (typeof TextDecoder !== 'undefined') {
+          return new TextDecoder('utf-8').decode(slice)
+        } else {
+          try {
+            let str = ''
+            for (let i = 0; i < slice.length; i++) {
+              str += String.fromCharCode(slice[i])
+            }
+            return decodeURIComponent(escape(str))
+          } catch {
+            return ''
+          }
+        }
+      }
+
       const requestTask = uni.request({
         url: `${baseUrl}/ai/chat/stream`,
         method: 'POST',
         header: headers,
         data: payload,
-        enableChunkReceived: true,
+        enableChunked: true,
         responseType: 'text',
         success: (res) => {
-          if (typeof res.data === 'string' && res.data.includes('data:')) {
+          // 若已通过 onChunkReceived 接收流式数据，不再重复解析全量数据，防止内容重复追加
+          if (!hasReceivedChunks && typeof res.data === 'string' && res.data.includes('data:')) {
             const lines = res.data.split('\n')
             for (const line of lines) {
               processSSELine(line)
@@ -358,22 +413,19 @@ const sendMessage = async (questionText?: string) => {
 
       currentAbortController.value = {
         abort: () => {
+          isManualAbort = true
           requestTask.abort()
         }
       }
 
       if (typeof (requestTask as any).onChunkReceived === 'function') {
         (requestTask as any).onChunkReceived((chunkRes: any) => {
+          hasReceivedChunks = true
           let textChunk = ''
           if (typeof chunkRes.data === 'string') {
             textChunk = chunkRes.data
           } else if (chunkRes.data instanceof ArrayBuffer) {
-            const uint8 = new Uint8Array(chunkRes.data)
-            if (typeof TextDecoder !== 'undefined') {
-              textChunk = new TextDecoder('utf-8').decode(uint8)
-            } else {
-              textChunk = decodeURIComponent(escape(String.fromCharCode(...uint8)))
-            }
+            textChunk = decodeStreamBytes(new Uint8Array(chunkRes.data))
           }
 
           chunkBuffer += textChunk
@@ -387,7 +439,7 @@ const sendMessage = async (questionText?: string) => {
     })
     // #endif
   } catch (err: any) {
-    if (err.name === 'AbortError') {
+    if (isManualAbort || err?.name === 'AbortError' || err?.errMsg?.includes('abort')) {
       logInfo('用户主动中断回答')
     } else {
       assistantMsg.content += (assistantMsg.content ? '\n\n' : '') +

@@ -6,6 +6,8 @@ import {
   signupActivityApi,
   cancelSignupActivityApi,
   getActivityStatusInfo,
+  isActivityFull,
+  promptCancelSignupModal,
   type ActivityItem,
   type ActivityStatusInfo
 } from '@/api/activity'
@@ -121,16 +123,10 @@ const goToNotices = () => {
 // 主页直接取消报名/退出候补
 const handleCancelSignup = (act: ActivityItem) => {
   const isWait = act.myEnrollmentStatus === 'WAITLIST'
-  uni.showModal({
-    title: isWait ? '确认退出候补' : '确认取消报名',
-    content: isWait
-      ? `确定退出「${act.title}」的候补排队吗？`
-      : `确定取消「${act.title}」的正式报名吗？取消后名额将自动让渡给排队候补的同学。`,
-    confirmText: isWait ? '退出候补' : '确认取消',
-    confirmColor: '#f56c6c',
-    cancelText: '保留名额',
-    success: async (res) => {
-      if (!res.confirm) return
+  promptCancelSignupModal({
+    title: act.title,
+    isWaitlist: isWait,
+    onConfirm: async () => {
       uni.showLoading({ title: '正在取消...', mask: true })
       try {
         const message = await cancelSignupActivityApi(act.id)
@@ -147,7 +143,7 @@ const handleCancelSignup = (act: ActivityItem) => {
 
 // 主页直接报名/申请候补
 const handleQuickSignup = (act: ActivityItem) => {
-  const isFull = act.enrolledCount >= act.registrationLimit
+  const isFull = isActivityFull(act)
   if (isFull && !act.waitlistEnabled) {
     uni.showToast({ title: '名额已满额，未开放候补', icon: 'none' })
     return
@@ -328,7 +324,7 @@ onShow(() => {
         <view class="act-progress-track">
           <view
             class="act-progress-fill"
-            :class="{ full: act.enrolledCount >= act.registrationLimit }"
+            :class="{ full: isActivityFull(act) }"
             :style="{ width: `${getPercent(act.enrolledCount, act.registrationLimit)}%` }"
           />
         </view>
@@ -337,7 +333,7 @@ onShow(() => {
         <view class="act-bottom-info">
           <view class="enrolled-quota">
             <text>名额 {{ act.enrolledCount }} / {{ act.registrationLimit }} 人</text>
-            <text v-if="act.enrolledCount >= act.registrationLimit && act.waitlistEnabled" class="waitlist-hint">
+            <text v-if="isActivityFull(act) && act.waitlistEnabled" class="waitlist-hint">
               · 可候补{{ act.waitlistCount ? ` (${act.waitlistCount}人排队)` : '' }}
             </text>
           </view>

@@ -31,7 +31,7 @@ export interface ActivityItem {
   myQueueNumber?: number | null
 }
 
-export { getActivityStatusInfo, type ActivityStatusInfo } from '@/utils/activityStatus'
+export { getActivityStatusInfo, isActivityFull, promptCancelSignupModal, type ActivityStatusInfo } from '@/utils/activityStatus'
 export { type ApiError } from '@/utils/request'
 
 export interface ActivityPageQuery {
@@ -239,68 +239,25 @@ export async function getMyActivitiesApi(query?: MyActivityQuery): Promise<PageR
   })
 
   if (res && res.records) {
-    // 补充展示字段
-    const enrichedRecords = await Promise.all(
-      res.records.map(async (item: any) => {
-        let actDetail: Partial<ActivityItem> = {}
-        try {
-          actDetail = await getActivityDetailApi(item.activityId)
-        } catch {
-          // 详情接口异常时不阻断列表展示
-        }
-        return {
-          ...item,
-          title: item.title || actDetail.title || `校园活动 #${item.activityId}`,
-          startTime: item.startTime || actDetail.startTime || item.signupTime || '',
-          endTime: item.endTime || actDetail.endTime || '',
-          locationName: item.locationName || actDetail.locationName || '校区指定场地',
-          points: item.points || actDetail.points || item.pointsAwarded || 0,
-          categoryName: item.categoryName || actDetail.categoryName || '校园活动',
-          coverImage: item.coverImage || actDetail.coverImage || '',
-          certificateEnabled:
-            item.certificateEnabled !== undefined ? item.certificateEnabled : actDetail.certificateEnabled
-        }
-      })
-    )
+    // 后端 MyActivityVO 已联表返回活动展示字段，直接消费，杜绝 N+1 级联请求
+    const records = res.records.map((item: any) => ({
+      ...item,
+      title: item.title || `校园活动 #${item.activityId}`,
+      startTime: item.startTime || item.signupTime || '',
+      endTime: item.endTime || '',
+      locationName: item.locationName || '校区指定场地',
+      points: item.points !== undefined && item.points !== null ? item.points : (item.pointsAwarded || 0),
+      categoryName: item.categoryName || '校园活动',
+      coverImage: item.coverImage || '',
+      certificateEnabled:
+        item.certificateEnabled !== undefined ? item.certificateEnabled : 0
+    }))
     return {
       ...res,
-      records: enrichedRecords
+      records
     }
   }
 
   return res
 }
 
-/**
- * 计算两个 GPS 经纬度坐标之间的直线距离（米）
- */
-export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000 // 地球半径（米）
-  const rad = (d: number) => (d * Math.PI) / 180.0
-  const dLat = rad(lat2 - lat1)
-  const dLon = rad(lon2 - lon1)
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return Math.round(R * c)
-}
-
-export interface QrCodeVO {
-  activityId: number
-  nonce: string
-  sign: string
-  expireTime: string
-  validSeconds: number
-  qrContent: string
-}
-
-/**
- * 2.6 获取活动实时动态防伪签到二维码 (GET /activity/{id}/qrcode)
- */
-export async function getActivityQrCodeApi(activityId: number): Promise<QrCodeVO> {
-  return await request<QrCodeVO>({
-    url: `/activity/${activityId}/qrcode`,
-    method: 'GET'
-  })
-}

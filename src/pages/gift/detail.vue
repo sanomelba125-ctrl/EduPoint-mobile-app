@@ -121,10 +121,14 @@ const handleExchange = async () => {
     return
   }
 
-  const finalName = receiverName.value.trim() || userInfo.value.name || '张晓明'
-  const finalPhone = receiverPhone.value.trim() || userInfo.value.phone || '13911110006'
+  const finalName = receiverName.value.trim() || userInfo.value.name || ''
+  const finalPhone = receiverPhone.value.trim() || userInfo.value.phone || ''
   const finalAddress = receiverAddress.value.trim() || '大学生活动中心一楼 102 创客服务台'
 
+  if (!finalName) {
+    uni.showToast({ title: '请输入提货联系人姓名', icon: 'none' })
+    return
+  }
   if (!finalPhone) {
     uni.showToast({ title: '请输入提货联系电话', icon: 'none' })
     return
@@ -162,7 +166,10 @@ const handleExchange = async () => {
         exchangeResult.value = result
         showSuccessModal.value = true
       } catch (err: any) {
-        uni.showToast({ title: err.message || '兑换失败，请稍后重试', icon: 'none' })
+        const msg = err.message && (err.message.includes('重新进入') || err.message.includes('令牌已失效'))
+          ? '防重令牌已刷新，请再次点击兑换！'
+          : (err.message || '兑换失败，请稍后重试')
+        uni.showToast({ title: msg, icon: 'none' })
         // 令牌可能已失效或被消耗，重试前自动刷新
         fetchToken()
       } finally {
@@ -322,7 +329,7 @@ onLoad((query: any) => {
         <view class="success-sub">请凭下方提货码至大活 102 室现场核销领取</view>
 
         <view class="pickup-code-display">
-          {{ exchangeResult?.pickupCode || 'PK-8892-01' }}
+          {{ exchangeResult?.pickupCode || '待生成提货凭证' }}
         </view>
 
         <view class="modal-btns">
