@@ -330,7 +330,7 @@ export async function getCurrentAMapLocation(): Promise<AMapLocationResult> {
       }
     }
   } catch (e: any) {
-    throw new Error(e?.message || '无法获取定位信息')
+    throw new Error(e?.message || '无法获取定位信息', { cause: e })
   }
   throw new Error('高德地图定位组件未能初始化')
   // #endif
