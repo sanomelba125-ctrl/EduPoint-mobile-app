@@ -29,7 +29,7 @@ export default [
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-undef': 'off',
       'no-empty': 'warn',
-      'no-console': 'off',
+      'no-console': 'warn',
       'no-useless-assignment': 'error',
       'no-loss-of-precision': 'error',
       'no-unreachable': 'error',
