@@ -26,3 +26,9 @@ pnpm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Environment sensitive configs (N2 security hardening)
+.env.development
+.env.production
+.env*.local
+!.env.example
