@@ -67,7 +67,7 @@ export function uploadImageApi(filePath: string, size?: number, fileName?: strin
       header: token ? { satoken: token } : {},
       success: (res: any) => {
         // uploadFile 的 data 是字符串，需手动解析为 JSON
-        let body: any = null
+        let body: any
         try {
           body = JSON.parse(res.data)
         } catch (e) {

@@ -88,8 +88,8 @@ export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatus
   const isFull = isActivityFull(act)
 
   // 2. 确定顶部徽章状态文本 (与原型一致)
-  let statusLabel = '报名中'
-  let statusType: 'primary' | 'success' | 'warning' | 'info' | 'danger' = 'success'
+  let statusLabel: string
+  let statusType: 'primary' | 'success' | 'warning' | 'info' | 'danger'
 
   if (isArchived) {
     statusLabel = '已下架'

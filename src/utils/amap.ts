@@ -174,9 +174,9 @@ function getLocationError(error: any): Error {
 }
 
 // WGS-84 转 GCJ-02 (火星坐标系) 转换算法，用于对齐高德地图坐标系统
-const PI = 3.1415926535897932384626
+const PI = Math.PI
 const A_AXIS = 6378245.0 // 长半轴
-const EE = 0.00669342162296594323 // 偏心率平方
+const EE = 0.006693421622965943 // 偏心率平方
 
 function transformLat(x: number, y: number): number {
   let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x))
