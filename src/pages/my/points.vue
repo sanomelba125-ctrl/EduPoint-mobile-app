@@ -18,7 +18,7 @@ const loading = ref(false)
 const balanceData = ref<StudentScoreBalanceVO>({
   currentPoints: userInfo.value.currentPoints || 0,
   totalPoints: userInfo.value.totalPoints || 0,
-  rank: 1
+  rank: undefined
 })
 const recordsList = ref<StudentPointRecordVO[]>([])
 
@@ -58,7 +58,7 @@ onShow(() => {
     <!-- 双积分看板卡片 -->
     <view class="pts-balance-card">
       <view class="pts-board-col">
-        <view class="pts-board-label">可用积分 (current)</view>
+        <view class="pts-board-label">可用积分</view>
         <view class="pts-board-num gold">
           {{ balanceData.currentPoints }}
         </view>
@@ -66,11 +66,11 @@ onShow(() => {
       </view>
 
       <view class="pts-board-col">
-        <view class="pts-board-label">历史累计学分 (total)</view>
+        <view class="pts-board-label">历史累计积分</view>
         <view class="pts-board-num light">
           {{ balanceData.totalPoints }}
         </view>
-        <view class="pts-board-sub">全校排名第 {{ balanceData.rank || 1 }} 名</view>
+        <view class="pts-board-sub">{{ balanceData.rank ? `全校排名第 ${balanceData.rank} 名` : '暂未进入全校榜单' }}</view>
       </view>
     </view>
 
@@ -112,16 +112,18 @@ onShow(() => {
 
         <view class="pts-val-box">
           <view :class="['pts-val-num', r.changePoints > 0 ? 'plus' : 'minus']">
-            {{ r.changePoints > 0 ? '+' : '' }}{{ r.changePoints }} pts
+            {{ r.changePoints > 0 ? '+' : '' }}{{ r.changePoints }} 积分
           </view>
           <view class="pts-after-bal">余额：{{ r.afterPoints }}</view>
         </view>
       </view>
 
-      <view v-if="!loading && recordsList.length === 0" class="empty-wrap">
-        <text class="empty-icon">🪙</text>
-        <text class="empty-text">暂无收支明细记录</text>
-      </view>
+      <app-empty
+        v-if="!loading && recordsList.length === 0"
+        icon="coins"
+        title="暂无积分收支明细"
+        desc="参与活动报名、现场打卡后，积分变动会记录在这里"
+      />
     </view>
   </view>
 </template>
@@ -186,23 +188,23 @@ onShow(() => {
   background: #ffffff;
   padding: 16rpx 32rpx;
   gap: 16rpx;
-  border-bottom: 1rpx solid #ebeef5;
+  border-bottom: 1rpx solid #e2e8f0;
 }
 
 .pts-tab-pill {
   font-size: 24rpx;
   font-weight: 500;
-  color: #606266;
+  color: #475569;
   padding: 10rpx 24rpx;
   border-radius: 28rpx;
   background: #f8fafc;
-  border: 1rpx solid #e4e7ed;
+  border: 1rpx solid #e2e8f0;
 }
 
 .pts-tab-pill.active {
-  background: #409eff;
+  background: #2563eb;
   color: #ffffff;
-  border-color: #409eff;
+  border-color: #2563eb;
 }
 
 .pts-timeline-wrap {
@@ -217,7 +219,7 @@ onShow(() => {
   border-radius: 12rpx;
   padding: 24rpx 28rpx;
   box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.02);
-  border: 1rpx solid #ebeef5;
+  border: 1rpx solid #e2e8f0;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -229,7 +231,7 @@ onShow(() => {
 
 .pts-title {
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
   font-size: 26rpx;
   line-height: 1.4;
   margin-bottom: 6rpx;
@@ -237,7 +239,7 @@ onShow(() => {
 
 .pts-meta {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .pts-val-box {
@@ -253,34 +255,19 @@ onShow(() => {
 }
 
 .pts-val-num.plus {
-  color: #67c23a;
+  color: #10b981;
 }
 
 .pts-val-num.minus {
-  color: #f56c6c;
+  color: #ef4444;
 }
 
 .pts-after-bal {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-top: 4rpx;
 }
 
-.empty-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 120rpx 0;
-  color: #909399;
-}
 
-.empty-icon {
-  font-size: 80rpx;
-  margin-bottom: 16rpx;
-}
 
-.empty-text {
-  font-size: 26rpx;
-}
 </style>

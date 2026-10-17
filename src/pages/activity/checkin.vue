@@ -4,7 +4,6 @@ import { onLoad, onHide, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import {
   getActivityDetailApi,
-  getActivityPageApi,
   checkinActivityApi,
   type ActivityItem,
   type CheckinResult,
@@ -31,8 +30,9 @@ const currentLat = ref<number | null>(null)
 const currentLon = ref<number | null>(null)
 const distanceToCenter = ref<number | null>(null)
 const isWithinRadius = ref<boolean>(false)
-const amapAddress = ref<string>('正在获取设备真实 GPS 定位...')
+const amapAddress = ref<string>('正在获取设备 GPS 定位...')
 const amapLoading = ref<boolean>(false)
+const gpsFailed = ref<boolean>(false)
 const isMockLocationActive = ref<boolean>(false)
 
 // 考勤成功结果弹窗
@@ -48,18 +48,13 @@ const loadActivity = async () => {
     activity.value = act
     await updateGpsDistance(true)
   } catch (err: any) {
-    console.warn(`加载活动 ${actId.value} 失败，尝试获取广场首项活动兜底...`, err)
-    try {
-      const pageRes = await getActivityPageApi({ page: 1, size: 5 })
-      if (pageRes && pageRes.records && pageRes.records.length > 0) {
-        const fallbackAct = pageRes.records[0]
-        actId.value = fallbackAct.id
-        activity.value = fallbackAct
-        await updateGpsDistance(true)
-        return
-      }
-    } catch {}
+    // 不再静默回落到"广场第一条活动"——对着无关活动的围栏打卡比报错更危险
     uni.showToast({ title: err?.message || '加载活动信息失败', icon: 'none' })
+    setTimeout(() => {
+      uni.navigateBack({
+        fail: () => uni.switchTab({ url: '/pages/activity/index' })
+      })
+    }, 1200)
   }
 }
 
@@ -68,6 +63,7 @@ const loadActivity = async () => {
  */
 const updateGpsDistance = async (silent = false): Promise<boolean> => {
   if (!activity.value) return false
+  if (amapLoading.value) return false
   amapLoading.value = true
 
   try {
@@ -77,6 +73,7 @@ const updateGpsDistance = async (silent = false): Promise<boolean> => {
     currentLon.value = loc.longitude
     amapAddress.value = loc.formattedAddress
     isMockLocationActive.value = false
+    gpsFailed.value = false
     calcDist()
     if (!silent) {
       uni.showToast({ title: 'GPS 定位已更新', icon: 'success' })
@@ -90,6 +87,7 @@ const updateGpsDistance = async (silent = false): Promise<boolean> => {
       currentLon.value = Number(activity.value.longitude)
       amapAddress.value = activity.value.locationAddress || activity.value.locationName || '活动考勤基准点(测试模拟)'
       isMockLocationActive.value = true
+      gpsFailed.value = false
       calcDist()
       if (!silent) {
         uni.showToast({ title: '已同步考勤模拟坐标(仅开发调试)', icon: 'none' })
@@ -101,6 +99,7 @@ const updateGpsDistance = async (silent = false): Promise<boolean> => {
     distanceToCenter.value = null
     isWithinRadius.value = false
     isMockLocationActive.value = false
+    gpsFailed.value = true
     amapAddress.value = '未获取到现场 GPS 定位，请检查设备定位权限'
     if (!silent) {
       uni.showToast({ title: getApiErrorMessage(err, '获取现场定位失败，请允许定位权限'), icon: 'none' })
@@ -315,6 +314,10 @@ const doCheckin = async (qrNonce: string, qrSign: string, qrActivityId = actId.v
       if (currentLat.value === null || currentLon.value === null || !isValidCoordinatePair(currentLon.value, currentLat.value)) {
         uni.hideLoading()
         uni.showToast({ title: '未获取到现场 GPS 定位，无法打卡', icon: 'none' })
+        // 校验未通过也要解锁扫码器，否则取景框会永久停在"扫描成功"且不再响应
+        setTimeout(() => {
+          scanLocked.value = false
+        }, 2500)
         return
       }
     }
@@ -358,6 +361,16 @@ const goBackHall = () => {
   })
 }
 
+// 顶栏返回：优先回到来源页（活动详情/记录），无来源时才兜底回大厅
+const handleHeaderBack = () => {
+  cameraViewerRef.value?.stopCamera()
+  uni.navigateBack({
+    fail: () => {
+      uni.switchTab({ url: '/pages/activity/index' })
+    }
+  })
+}
+
 const goToCertificates = () => {
   showSuccessModal.value = false
   cameraViewerRef.value?.stopCamera()
@@ -392,7 +405,14 @@ onLoad(async (query: any) => {
   const rawId = query?.actId || query?.activityId || query?.id
   let parsedId = Number(rawId)
   if (!Number.isInteger(parsedId) || parsedId <= 0 || String(rawId).includes('object')) {
-    parsedId = 1
+    // 深链损坏时明确报错并退回，绝不静默换成另一个活动
+    uni.showToast({ title: '活动参数缺失，请从活动详情进入打卡', icon: 'none' })
+    setTimeout(() => {
+      uni.navigateBack({
+        fail: () => uni.switchTab({ url: '/pages/activity/index' })
+      })
+    }, 1200)
+    return
   }
   actId.value = parsedId
 
@@ -414,7 +434,7 @@ onLoad(async (query: any) => {
   <view class="checkin-container">
     <!-- 顶部导航栏 -->
     <view class="checkin-header">
-      <view class="checkin-back-btn" @click="goBackHall">
+      <view class="checkin-back-btn" @click="handleHeaderBack">
         <svg class="header-svg" viewBox="0 0 24 24">
           <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/>
         </svg>
@@ -430,7 +450,7 @@ onLoad(async (query: any) => {
     <!-- 活动信息贴条 -->
     <view v-if="activity" class="act-focus-strip">
       <text class="focus-title">{{ activity.title }}</text>
-      <text class="focus-pts">+{{ activity.points }} pts</text>
+      <text class="focus-pts">+{{ activity.points }} 积分</text>
     </view>
 
     <!-- 扫码主体区域 -->
@@ -438,7 +458,7 @@ onLoad(async (query: any) => {
       <!-- 原生 UTS 相机插件 (xview-camera-viewer) 封装组件 -->
       <XviewCameraViewer
         ref="cameraViewerRef"
-        :prefer-front="true"
+        :prefer-front="false"
         :auto-start="true"
         :scan-locked="scanLocked"
         @scan="onAutoScanSuccess"
@@ -447,11 +467,11 @@ onLoad(async (query: any) => {
       <!-- 动态提示指引 -->
       <view class="scan-guidelines">
         <view class="guide-line1">请将大屏幕展示的现场动态签到二维码置于取景框中</view>
-        <view class="guide-line2">支持 PC 前置摄像头/手机摄像头实时取景，扫码后自动解析完成打卡</view>
+        <view class="guide-line2">对准二维码后自动识别并完成打卡，光线较暗可点右上角补光</view>
       </view>
 
       <!-- 真实设备 GPS 考勤定位与高德测距卡片 -->
-      <view class="amap-badge-card" :class="{ 'amap-warning': !isWithinRadius }">
+      <view class="amap-badge-card" :class="{ 'amap-warning': distanceToCenter !== null && !isWithinRadius }">
         <view class="amap-top-row">
           <view class="amap-brand">
             <svg class="amap-logo-svg" viewBox="0 0 24 24">
@@ -465,7 +485,7 @@ onLoad(async (query: any) => {
           <view class="amap-mode-tabs">
             <view
               class="mode-tab-btn"
-              :class="{ active: !amapLoading }"
+              :class="{ active: amapLoading }"
               @click="updateGpsDistance(false)"
             >
               {{ amapLoading ? '定位中...' : '刷新定位' }}
@@ -482,16 +502,20 @@ onLoad(async (query: any) => {
         </view>
 
         <!-- 考勤范围与高德测距判定 -->
-        <view v-if="distanceToCenter !== null" class="amap-status-strip">
+        <view v-if="!activity.locationCheckEnabled" class="amap-status-strip">
+          <text class="status-ok">本活动不校验现场定位，扫码即可完成出勤登记</text>
+        </view>
+        <view v-else-if="distanceToCenter !== null" class="amap-status-strip">
           <text v-if="isWithinRadius" class="status-ok">
-            ✓ 高德核验合格：距活动中心 {{ distanceToCenter }} 米（允许 ≤ {{ activity?.locationRadius || 500 }}m）
+            ✓ 高德核验合格：距活动中心 {{ distanceToCenter }} 米（允许 ≤ {{ activity?.locationRadius }}m）
           </text>
           <text v-else class="status-warn">
-            ✕ 超出打卡范围：距中心点 {{ distanceToCenter }} 米（要求 ≤ {{ activity?.locationRadius || 500 }}m）
+            ✕ 超出打卡范围：距中心点 {{ distanceToCenter }} 米（要求 ≤ {{ activity?.locationRadius }}m）
           </text>
         </view>
         <view v-else class="amap-status-strip">
-          <text class="status-warn">GPS 定位初始化中，可点击右上角【刷新定位】</text>
+          <text v-if="gpsFailed" class="status-warn">未获取到定位，请检查定位权限后点击【刷新定位】</text>
+          <text v-else class="status-warn">GPS 定位初始化中，可点击右上角【刷新定位】</text>
         </view>
       </view>
     </view>
@@ -513,16 +537,16 @@ onLoad(async (query: any) => {
         <view class="points-grant-box">
           <view class="points-grant-title">本次活动出勤奖励</view>
           <view class="points-grant-val">
-            +{{ checkinResult?.pointsAwarded || activity?.points || 50 }}
-            <text class="pts-unit">pts</text>
+            +{{ checkinResult?.pointsAwarded ?? activity?.points ?? 0 }}
+            <text class="pts-unit">积分</text>
           </view>
           <view class="points-grant-sub">
-            已即时入账至可用学分余额（最新余额：{{ checkinResult?.currentPoints || userStore.userInfo.currentPoints }} pts）
+            已即时入账至可用积分余额（最新余额：{{ checkinResult?.currentPoints || userStore.userInfo.currentPoints }} 积分）
           </view>
         </view>
 
-        <!-- 电子证书发放提示 -->
-        <view v-if="checkinResult?.certificateIssued || activity?.certificateEnabled" class="cert-grant-notice">
+        <!-- 电子证书发放提示（仅当本次确实签发，不把"活动配置了发证"当成"已签发"） -->
+        <view v-if="checkinResult?.certificateIssued" class="cert-grant-notice">
           <svg class="cert-svg" viewBox="0 0 24 24">
             <path d="M13,21V19H17.8L13,14.2V9H18.2L13.4,4.2L14.8,2.8L21.6,9.6L14.8,16.4L16.2,17.8L18.4,15.6V21H13M11,21H3V3H11V5H5V19H11V21Z"/>
           </svg>
@@ -536,7 +560,7 @@ onLoad(async (query: any) => {
 
         <view class="modal-btn-column">
           <button
-            v-if="checkinResult?.certificateIssued || activity?.certificateEnabled"
+            v-if="checkinResult?.certificateIssued"
             class="modal-btn btn-primary"
             @click="goToCertificates"
           >
@@ -562,7 +586,7 @@ onLoad(async (query: any) => {
 
 /* 顶部操作条 */
 .checkin-header {
-  padding: 40rpx 28rpx 16rpx;
+  padding: calc(var(--status-bar-height, 0px) + 20rpx) 28rpx 16rpx;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -768,7 +792,7 @@ onLoad(async (query: any) => {
 }
 
 .status-ok {
-  color: #67c23a;
+  color: #10b981;
   font-weight: 500;
 }
 
@@ -800,16 +824,16 @@ onLoad(async (query: any) => {
   padding: 40rpx 32rpx 36rpx;
   text-align: center;
   box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.25);
-  color: #303133;
+  color: #1e293b;
 }
 
 .success-icon-badge {
   width: 96rpx;
   height: 96rpx;
   border-radius: 50%;
-  background-color: #f0f9eb;
+  background-color: #ecfdf5;
   border: 3rpx solid #b3e19d;
-  color: #67c23a;
+  color: #10b981;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -819,25 +843,25 @@ onLoad(async (query: any) => {
 .check-svg {
   width: 52rpx;
   height: 52rpx;
-  fill: #67c23a;
+  fill: #10b981;
 }
 
 .success-title {
   font-size: 34rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   margin-bottom: 12rpx;
 }
 
 .success-sub {
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   margin-bottom: 32rpx;
   line-height: 1.4;
 }
 
 .points-grant-box {
-  background: linear-gradient(135deg, #ecf5ff, #f0f9eb);
+  background: linear-gradient(135deg, #eff6ff, #ecfdf5);
   border: 1px solid #d9ecff;
   border-radius: 12rpx;
   padding: 24rpx;
@@ -846,14 +870,14 @@ onLoad(async (query: any) => {
 
 .points-grant-title {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-bottom: 8rpx;
 }
 
 .points-grant-val {
   font-size: 52rpx;
   font-weight: 800;
-  color: #409eff;
+  color: #2563eb;
   line-height: 1.2;
 }
 
@@ -865,7 +889,7 @@ onLoad(async (query: any) => {
 
 .points-grant-sub {
   font-size: 20rpx;
-  color: #909399;
+  color: #64748b;
   margin-top: 8rpx;
 }
 
@@ -873,7 +897,7 @@ onLoad(async (query: any) => {
   display: flex;
   align-items: center;
   gap: 16rpx;
-  background-color: #fdf6ec;
+  background-color: #fffbeb;
   border: 1px solid #faecd8;
   border-radius: 10rpx;
   padding: 16rpx 20rpx;
@@ -884,7 +908,7 @@ onLoad(async (query: any) => {
 .cert-svg {
   width: 36rpx;
   height: 36rpx;
-  fill: #e6a23c;
+  fill: #f59e0b;
   flex-shrink: 0;
 }
 
@@ -895,12 +919,12 @@ onLoad(async (query: any) => {
 .cert-strong {
   font-size: 22rpx;
   font-weight: 700;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .cert-desc {
   font-size: 20rpx;
-  color: #909399;
+  color: #64748b;
   line-height: 1.3;
   margin-top: 2rpx;
 }
@@ -922,18 +946,18 @@ onLoad(async (query: any) => {
 }
 
 .btn-primary {
-  background-color: #409eff;
+  background-color: #2563eb;
   color: #ffffff;
 }
 
 .btn-primary:active {
-  background-color: #66b1ff;
+  background-color: #60a5fa;
 }
 
 .btn-default {
   background-color: #f4f4f5;
-  color: #606266;
-  border: 1px solid #dcdfe6;
+  color: #475569;
+  border: 1px solid #e2e8f0;
 }
 
 .btn-default:active {

@@ -66,6 +66,7 @@ const filteredNoticeList = computed(() => {
 })
 
 // 分页拉取通知列表（支持后端 isRead 筛选，切换 Tab 时重置分页）
+let noticeReqSeq = 0
 const fetchNotices = async (reset = false) => {
   if (reset) {
     page.value = 1
@@ -73,6 +74,7 @@ const fetchNotices = async (reset = false) => {
   }
   if (!hasMore.value && !reset) return
 
+  const seq = ++noticeReqSeq
   loading.value = true
   try {
     const isReadParam = activeTab.value === 'unread' ? 0 : undefined
@@ -81,6 +83,8 @@ const fetchNotices = async (reset = false) => {
       size: pageSize,
       isRead: isReadParam
     })
+    // 切 Tab 与翻页并发时，晚到的旧响应不得污染当前列表
+    if (seq !== noticeReqSeq) return
 
     const records = res?.records || []
     if (reset) {
@@ -116,9 +120,11 @@ const switchTab = (tab: TabType) => {
 const handleNoticeClick = async (item: SysNoticeVO) => {
   if (item.isRead === 0) {
     try {
-      await markNoticeAsReadApi(item.id)
-      item.isRead = 1
-      if (unreadCount.value > 0) unreadCount.value--
+      const ok = await markNoticeAsReadApi(item.id)
+      if (ok !== false) {
+        item.isRead = 1
+        if (unreadCount.value > 0) unreadCount.value--
+      }
     } catch (err) {
       console.warn('标记已读失败:', err)
     }
@@ -142,13 +148,21 @@ const handleMarkAllRead = async () => {
       if (res.confirm) {
         uni.showLoading({ title: '正在处理...' })
         try {
-          await markAllNoticesAsReadApi()
+          const ok = await markAllNoticesAsReadApi()
           uni.hideLoading()
+          if (ok === false) {
+            uni.showToast({ title: '操作失败，请重试', icon: 'none' })
+            return
+          }
           uni.showToast({ title: '已全部标记为已读', icon: 'success' })
           unreadCount.value = 0
           noticeList.value.forEach((n) => {
             n.isRead = 1
           })
+          // "未读"页签是服务端筛选，本地改 isRead 不会剔除条目，必须重拉
+          if (activeTab.value === 'unread') {
+            fetchNotices(true)
+          }
         } catch (err) {
           uni.hideLoading()
           uni.showToast({ title: '操作失败', icon: 'none' })
@@ -167,7 +181,11 @@ const handleDeleteNotice = (item: SysNoticeVO) => {
     success: async (res) => {
       if (res.confirm) {
         try {
-          await deleteNoticeApi(item.id)
+          const ok = await deleteNoticeApi(item.id)
+          if (ok === false) {
+            uni.showToast({ title: '删除失败，请重试', icon: 'none' })
+            return
+          }
           uni.showToast({ title: '已删除', icon: 'none' })
           noticeList.value = noticeList.value.filter((n) => n.id !== item.id)
           if (item.isRead === 0 && unreadCount.value > 0) {
@@ -245,28 +263,29 @@ const getActionBtnText = (item: SysNoticeVO): string => {
 const getTypeConfig = (type?: string) => {
   switch (type) {
     case 'points_adjusted':
-      return { label: '积分调账', badgeClass: 'badge-orange', icon: '💰' }
+      return { label: '积分调账', badgeClass: 'badge-orange', icon: 'coins' }
     case 'activity_checkin_reward':
-      return { label: '打卡奖励', badgeClass: 'badge-green', icon: '🎯' }
+      return { label: '打卡奖励', badgeClass: 'badge-green', icon: 'target' }
     case 'activity_card':
-      return { label: '活动出勤', badgeClass: 'badge-green', icon: '📍' }
+      return { label: '活动出勤', badgeClass: 'badge-green', icon: 'map-pin' }
     case 'new_activity':
-      return { label: '新活动发布', badgeClass: 'badge-blue', icon: '📢' }
+      return { label: '新活动发布', badgeClass: 'badge-blue', icon: 'megaphone' }
     case 'waitlist_promoted':
-      return { label: '候补转正', badgeClass: 'badge-teal', icon: '⚡' }
+      return { label: '候补转正', badgeClass: 'badge-teal', icon: 'zap' }
     case 'gift_exchange':
-      return { label: '礼品兑换', badgeClass: 'badge-purple', icon: '🎁' }
+      return { label: '礼品兑换', badgeClass: 'badge-purple', icon: 'gift' }
     case 'gift_send':
-      return { label: '提货就绪', badgeClass: 'badge-purple', icon: '📦' }
+      return { label: '提货就绪', badgeClass: 'badge-purple', icon: 'package' }
     default:
-      return { label: '系统通知', badgeClass: 'badge-default', icon: '🔔' }
+      return { label: '系统通知', badgeClass: 'badge-default', icon: 'bell' }
   }
 }
 
 // 友好时间格式化
 const formatTime = (timeStr?: string) => {
   if (!timeStr) return ''
-  const date = new Date(timeStr)
+  // 后端统一序列化为 "yyyy-MM-dd HH:mm:ss"（空格分隔），iOS/小程序引擎解析非 ISO 串会得到 Invalid Date
+  const date = new Date(timeStr.replace(' ', 'T'))
   if (isNaN(date.getTime())) return timeStr
 
   const now = new Date()
@@ -311,30 +330,32 @@ onReachBottom(() => {
   <view class="notice-center-page">
     <!-- 顶部状态栏与分类横滑栏 (吸顶) -->
     <view class="top-nav-bar">
-      <!-- 横滑分类标签 -->
-      <scroll-view class="tab-scroll-wrap" scroll-x :show-scrollbar="false">
-        <view class="tab-pill-group">
-          <view
-            v-for="tab in TAB_OPTIONS"
-            :key="tab.key"
-            class="tab-pill"
-            :class="{ active: activeTab === tab.key }"
-            @click="switchTab(tab.key)"
-          >
-            <text class="tab-text">{{ tab.name }}</text>
-            <text
-              v-if="tab.key === 'unread' && unreadCount > 0"
-              class="tab-badge"
+      <!-- 横滑分类标签（外层加右侧渐隐，提示可横向滑动） -->
+      <view class="tab-scroll-outer">
+        <scroll-view class="tab-scroll-wrap" scroll-x :show-scrollbar="false">
+          <view class="tab-pill-group">
+            <view
+              v-for="tab in TAB_OPTIONS"
+              :key="tab.key"
+              class="tab-pill"
+              :class="{ active: activeTab === tab.key }"
+              @click="switchTab(tab.key)"
             >
-              {{ unreadCount > 99 ? '99+' : unreadCount }}
-            </text>
+              <text class="tab-text">{{ tab.name }}</text>
+              <text
+                v-if="tab.key === 'unread' && unreadCount > 0"
+                class="tab-badge"
+              >
+                {{ unreadCount > 99 ? '99+' : unreadCount }}
+              </text>
+            </view>
           </view>
-        </view>
-      </scroll-view>
+        </scroll-view>
+      </view>
 
-      <!-- 右侧操作栏：全部已读 -->
+      <!-- 右侧操作栏：全部已读（无未读时点击会得到提示，故不置灰） -->
       <view class="action-bar-right" @click="handleMarkAllRead">
-        <text class="action-btn-text" :class="{ disabled: unreadCount === 0 }">
+        <text class="action-btn-text">
           全部已读
         </text>
       </view>
@@ -353,7 +374,7 @@ onReachBottom(() => {
           <view class="header-left">
             <view v-if="item.isRead === 0" class="pulse-dot"></view>
             <view class="type-tag" :class="getTypeConfig(item.type).badgeClass">
-              <text class="type-icon">{{ getTypeConfig(item.type).icon }}</text>
+              <view class="type-icon"><app-icon :name="getTypeConfig(item.type).icon" :size="30" /></view>
               <text class="type-name">{{ item.typeName || getTypeConfig(item.type).label }}</text>
             </view>
             <text class="notice-title">{{ item.title }}</text>
@@ -391,15 +412,12 @@ onReachBottom(() => {
       </view>
 
       <!-- 空状态 -->
-      <view v-if="!loading && filteredNoticeList.length === 0" class="empty-state">
-        <view class="empty-icon-box">🔔</view>
-        <text class="empty-title">
-          {{ activeTab === 'unread' ? '暂无未读通知' : '暂无相关系统通知' }}
-        </text>
-        <text class="empty-desc">
-          活动报名、现场打卡、积分变动与礼品提货动态将第一时间在此送达
-        </text>
-      </view>
+      <app-empty
+        v-if="!loading && filteredNoticeList.length === 0"
+        icon="bell"
+        :title="activeTab === 'unread' ? '暂无未读通知' : '暂无相关系统通知'"
+        desc="活动报名、现场打卡、积分变动与礼品提货动态将第一时间在此送达"
+      />
 
       <!-- 底部分页加载提示 -->
       <view v-if="filteredNoticeList.length > 0" class="loading-footer">
@@ -466,10 +484,24 @@ onReachBottom(() => {
   box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
 }
 
-.tab-scroll-wrap {
+.tab-scroll-outer {
+  position: relative;
   flex: 1;
-  white-space: nowrap;
+  min-width: 0;
   margin-right: 20rpx;
+}
+.tab-scroll-outer::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 48rpx;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #ffffff);
+  pointer-events: none;
+}
+.tab-scroll-wrap {
+  white-space: nowrap;
 }
 
 .tab-pill-group {
@@ -526,10 +558,6 @@ onReachBottom(() => {
   font-size: 26rpx;
   color: #2563eb;
   font-weight: 600;
-}
-
-.action-btn-text.disabled {
-  color: #cbd5e1;
 }
 
 /* 消息列表主体 */
@@ -732,41 +760,9 @@ onReachBottom(() => {
 }
 
 /* 空状态 */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 120rpx 40rpx;
-}
 
-.empty-icon-box {
-  font-size: 80rpx;
-  margin-bottom: 24rpx;
-  background: #ffffff;
-  width: 140rpx;
-  height: 140rpx;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.04);
-}
 
-.empty-title {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 12rpx;
-}
 
-.empty-desc {
-  font-size: 24rpx;
-  color: #94a3b8;
-  text-align: center;
-  line-height: 1.5;
-  max-width: 500rpx;
-}
 
 .loading-footer {
   text-align: center;

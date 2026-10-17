@@ -3,6 +3,7 @@ import request from '@/utils/request'
 export interface MyCertificateItem {
   id: number
   certificateNo: string
+  activityId?: number
   activityTitle: string
   title: string
   issuer: string

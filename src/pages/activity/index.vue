@@ -240,20 +240,22 @@ onShow(() => {
       </view>
     </view>
 
-    <!-- 分类横滑标签 -->
-    <scroll-view class="category-scroll-bar" scroll-x :show-scrollbar="false">
-      <view class="cat-pill-wrap">
-        <view
-          v-for="cat in CATEGORIES"
-          :key="cat.key"
-          class="cat-pill"
-          :class="{ active: currentCategory === cat.key }"
-          @click="handleCategorySelect(cat.key)"
-        >
-          {{ cat.name }}
+    <!-- 分类横滑标签（外层加右侧渐隐，提示可横向滑动，同时避免末位标签被硬切断） -->
+    <view class="category-bar-wrap">
+      <scroll-view class="category-scroll-bar" scroll-x :show-scrollbar="false">
+        <view class="cat-pill-wrap">
+          <view
+            v-for="cat in CATEGORIES"
+            :key="cat.key"
+            class="cat-pill"
+            :class="{ active: currentCategory === cat.key }"
+            @click="handleCategorySelect(cat.key)"
+          >
+            {{ cat.name }}
+          </view>
         </view>
-      </view>
-    </scroll-view>
+      </scroll-view>
+    </view>
 
     <!-- 大厅功能快速联动条：我的参与记录快捷入口 -->
     <view class="quick-entry-row">
@@ -276,7 +278,7 @@ onShow(() => {
         <text class="banner-badge">
           {{ featuredActivity.certificateEnabled ? '重点学术讲座 · 颁发结业证书' : '热门重点推荐' }}
         </text>
-        <text class="banner-points">+{{ featuredActivity.points }} pts</text>
+        <text class="banner-points">+{{ featuredActivity.points }} 积分</text>
       </view>
       <view class="banner-title">{{ featuredActivity.title }}</view>
       <view class="banner-desc">
@@ -329,7 +331,7 @@ onShow(() => {
           />
         </view>
 
-        <!-- 底部说明与学分奖励 -->
+        <!-- 底部说明与积分奖励 -->
         <view class="act-bottom-info">
           <view class="enrolled-quota">
             <text>名额 {{ act.enrolledCount }} / {{ act.registrationLimit }} 人</text>
@@ -337,23 +339,23 @@ onShow(() => {
               · 可候补{{ act.waitlistCount ? ` (${act.waitlistCount}人排队)` : '' }}
             </text>
           </view>
-          <text class="points-val">+{{ act.points }} pts</text>
+          <text class="points-val">+{{ act.points }} 积分</text>
         </view>
       </view>
 
       <!-- 空状态 -->
-      <view v-if="!loading && activityList.length === 0" class="empty-box">
-        <svg class="empty-svg" viewBox="0 0 24 24">
-          <path d="M19,20H4C2.89,20 2,19.1 2,18V6C2,4.89 2.89,4 4,4H10L12,6H19A2,2 0 0,1 21,8H21L4,8V18L6.14,10H23.21L20.93,18.5C20.7,19.37 19.92,20 19,20Z"/>
-        </svg>
-        <text class="empty-text">暂无符合条件的校园活动</text>
-      </view>
+      <app-empty
+        v-if="!loading && activityList.length === 0"
+        icon="folder"
+        title="暂无符合条件的校园活动"
+        desc="试试切换上方的分类，或下拉刷新看看新发布的活动"
+      />
     </view>
 
     <!-- 全局悬浮 AI 智能客服入口 -->
     <view class="floating-ai-btn" @click="goToAiChat">
       <view class="ai-pulse-ring"></view>
-      <text class="ai-btn-icon">🤖</text>
+      <app-icon name="bot" :size="44" color="#ffffff" />
       <text class="ai-btn-label">AI客服</text>
     </view>
   </view>
@@ -397,20 +399,20 @@ onShow(() => {
 
 .search-input-box:focus-within {
   background-color: #ffffff;
-  box-shadow: 0 0 0 1px #409eff;
+  box-shadow: 0 0 0 1px #2563eb;
 }
 
 .search-icon {
   width: 28rpx;
   height: 28rpx;
   margin-right: 12rpx;
-  fill: #909399;
+  fill: #64748b;
 }
 
 .search-input {
   flex: 1;
   font-size: 26rpx;
-  color: #303133;
+  color: #1e293b;
 }
 
 .clear-btn {
@@ -432,9 +434,9 @@ onShow(() => {
   align-items: center;
   justify-content: center;
   gap: 8rpx;
-  background-color: #ecf5ff;
+  background-color: #eff6ff;
   border: 1px solid #c6e2ff;
-  color: #409eff;
+  color: #2563eb;
   height: 72rpx;
   padding: 0 24rpx;
   border-radius: 36rpx;
@@ -450,7 +452,7 @@ onShow(() => {
 .checkin-svg {
   width: 28rpx;
   height: 28rpx;
-  fill: #409eff;
+  fill: #2563eb;
 }
 
 .qr-text {
@@ -459,9 +461,28 @@ onShow(() => {
 }
 
 /* 5 大分类横滑标签 */
-.category-scroll-bar {
+.category-bar-wrap {
+  position: relative;
   background-color: #ffffff;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* 右侧渐隐遮罩：既是"还能继续滑动"的视觉提示，
+   也让末位标签以淡出收尾，而不是被硬生生切掉一半 */
+.category-bar-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 64rpx;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #ffffff 80%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.category-scroll-bar {
+  background-color: transparent;
   white-space: nowrap;
 }
 
@@ -477,7 +498,7 @@ onShow(() => {
   border-radius: 28rpx;
   font-size: 24rpx;
   font-weight: 500;
-  color: #606266;
+  color: #475569;
   background-color: #f4f4f5;
   border: 1px solid #e9e9eb;
   flex-shrink: 0;
@@ -485,9 +506,9 @@ onShow(() => {
 }
 
 .cat-pill.active {
-  background-color: #409eff;
+  background-color: #2563eb;
   color: #ffffff;
-  border-color: #409eff;
+  border-color: #2563eb;
   font-weight: 600;
   box-shadow: 0 2rpx 8rpx rgba(64, 158, 255, 0.35);
 }
@@ -503,7 +524,7 @@ onShow(() => {
 .entry-sub-title {
   font-size: 24rpx;
   font-weight: 700;
-  color: #606266;
+  color: #475569;
   letter-spacing: 0.5rpx;
 }
 
@@ -512,14 +533,14 @@ onShow(() => {
   align-items: center;
   gap: 4rpx;
   font-size: 24rpx;
-  color: #409eff;
+  color: #2563eb;
   font-weight: 500;
 }
 
 .arrow-svg {
   width: 24rpx;
   height: 24rpx;
-  fill: #409eff;
+  fill: #2563eb;
 }
 
 /* 焦点活动推荐 Banner (高校严谨深蓝) */
@@ -573,7 +594,9 @@ onShow(() => {
 
 /* 活动卡片列表 */
 .activity-list-wrap {
-  padding: 12rpx 24rpx;
+  /* 底部留出 180rpx：右下角常驻的 AI 客服悬浮球（fixed，直径 104rpx + 距底 140rpx）
+     会盖住最后一张活动卡片的名额与积分，留白保证卡片能完整滚出遮挡区 */
+  padding: 12rpx 24rpx 180rpx;
   display: flex;
   flex-direction: column;
   gap: 20rpx;
@@ -582,7 +605,7 @@ onShow(() => {
 .act-item-card {
   background-color: #ffffff;
   border-radius: 16rpx;
-  border: 1px solid #ebeef5;
+  border: 1px solid #e2e8f0;
   padding: 24rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -613,14 +636,14 @@ onShow(() => {
 }
 
 .tag-primary {
-  background-color: #ecf5ff;
-  color: #409eff;
+  background-color: #eff6ff;
+  color: #2563eb;
   border: 1px solid #d9ecff;
 }
 
 .tag-cert {
-  background-color: #fdf6ec;
-  color: #e6a23c;
+  background-color: #fffbeb;
+  color: #f59e0b;
   border: 1px solid #faecd8;
 }
 
@@ -632,33 +655,33 @@ onShow(() => {
 }
 
 .status-success {
-  background-color: #f0f9eb;
-  color: #67c23a;
+  background-color: #ecfdf5;
+  color: #10b981;
   border: 1px solid #c2e7b0;
 }
 
 .status-warning {
-  background-color: #fdf6ec;
-  color: #e6a23c;
+  background-color: #fffbeb;
+  color: #f59e0b;
   border: 1px solid #f5dab1;
 }
 
 .status-info {
   background-color: #f4f4f5;
-  color: #909399;
+  color: #64748b;
   border: 1px solid #e9e9eb;
 }
 
 .status-primary {
-  background-color: #ecf5ff;
-  color: #409eff;
+  background-color: #eff6ff;
+  color: #2563eb;
   border: 1px solid #d9ecff;
 }
 
 .act-card-title {
   font-size: 29rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   line-height: 1.4;
   margin-bottom: 14rpx;
 }
@@ -668,14 +691,14 @@ onShow(() => {
   align-items: center;
   gap: 12rpx;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   margin-bottom: 8rpx;
 }
 
 .row-svg {
   width: 26rpx;
   height: 26rpx;
-  fill: #909399;
+  fill: #64748b;
 }
 
 .row-text {
@@ -692,13 +715,13 @@ onShow(() => {
 
 .act-progress-fill {
   height: 100%;
-  background-color: #409eff;
+  background-color: #2563eb;
   border-radius: 4rpx;
   transition: width 0.3s ease;
 }
 
 .act-progress-fill.full {
-  background-color: #e6a23c;
+  background-color: #f59e0b;
 }
 
 .act-bottom-info {
@@ -709,40 +732,24 @@ onShow(() => {
 }
 
 .enrolled-quota {
-  color: #909399;
+  color: #64748b;
   font-weight: 500;
 }
 
 .waitlist-hint {
-  color: #e6a23c;
+  color: #f59e0b;
   margin-left: 6rpx;
 }
 
 .points-val {
-  color: #e6a23c;
+  color: #f59e0b;
   font-weight: 700;
   font-size: 28rpx;
 }
 
 /* 空状态 */
-.empty-box {
-  padding: 100rpx 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16rpx;
-}
 
-.empty-svg {
-  width: 72rpx;
-  height: 72rpx;
-  fill: #c0c4cc;
-}
 
-.empty-text {
-  font-size: 26rpx;
-  color: #909399;
-}
 
 /* 悬浮 AI 智能客服入口 */
 .floating-ai-btn {

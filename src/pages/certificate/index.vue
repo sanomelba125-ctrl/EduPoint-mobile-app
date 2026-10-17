@@ -14,7 +14,7 @@
     </view>
 
     <!-- 证书切换横滑栏 -->
-    <scroll-view scroll-x class="cert-scroll-tabs" :show-scrollbar="false">
+    <scroll-view v-if="certList.length" scroll-x class="cert-scroll-tabs" :show-scrollbar="false">
       <view class="tabs-inner">
         <view
           v-for="(item, index) in certList"
@@ -27,6 +27,11 @@
         </view>
       </view>
     </scroll-view>
+
+    <!-- 无任何证书时的空状态 -->
+    <view v-if="!certList.length && !loadingCerts" class="cert-empty-wrap">
+      <app-empty icon="certificate" title="暂无已签发的电子证书" desc="完成活动出勤打卡并结项后，证书会自动签发到这里" />
+    </view>
 
     <!-- 证书主体画幅 (严格参考原型) -->
     <view class="cert-stage" v-if="currentCert">
@@ -50,9 +55,10 @@
           <text> 中，按时出勤签到，表现优异，经考核准予结业，特发此证！</text>
         </view>
 
-        <!-- 撤销标记 (若被撤销) -->
-        <view v-if="currentCert.status === 2" class="cert-revoked-tag">
-          <text>【已作废撤销】{{ currentCert.revokeReason }}</text>
+        <!-- 撤销 / 过期标记 -->
+        <view v-if="currentCert.status !== 1" class="cert-revoked-tag" :class="{ expired: currentCert.status === 3 }">
+          <text v-if="currentCert.status === 2">【已作废撤销】{{ currentCert.revokeReason }}</text>
+          <text v-else>【已过有效期】该证书超出有效保护期限，仅存档不再具备核验效力</text>
         </view>
 
         <!-- 底部防伪二维码与签章 -->
@@ -73,24 +79,26 @@
           </view>
         </view>
 
-        <!-- 矢量权威防伪电子印章 -->
-        <svg class="cert-official-seal-svg" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="46" fill="none" stroke="#dc2626" stroke-width="2.5" />
-          <circle cx="50" cy="50" r="42" fill="none" stroke="#dc2626" stroke-width="1" />
-          <polygon points="50,26 53,35 62,35 55,40 57,49 50,44 43,49 45,40 38,35 47,35" fill="#dc2626" />
-          <text x="50" y="65" text-anchor="middle" fill="#dc2626" font-size="8" font-weight="bold" letter-spacing="1">学工部认证</text>
-          <text x="50" y="76" text-anchor="middle" fill="#dc2626" font-size="7">★ 防伪验讫 ★</text>
-        </svg>
+        <!-- 矢量权威防伪电子印章（svg 内的文字在 uni-app 下不渲染，改用 HTML 叠字） -->
+        <view class="cert-seal-wrap">
+          <svg class="cert-official-seal-svg" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="46" fill="none" stroke="#dc2626" stroke-width="2.5" />
+            <circle cx="50" cy="50" r="42" fill="none" stroke="#dc2626" stroke-width="1" />
+            <polygon points="50,26 53,35 62,35 55,40 57,49 50,44 43,49 45,40 38,35 47,35" fill="#dc2626" />
+          </svg>
+          <text class="seal-issuer-txt">{{ sealIssuerText }}</text>
+          <text class="seal-verify-txt">★ 防伪验讫 ★</text>
+        </view>
       </view>
     </view>
 
     <!-- 底部操作栏 -->
-    <view class="cert-action-bar">
+    <view v-if="currentCert" class="cert-action-bar">
       <button class="btn btn-outline" @click="handleOnlineVerify">
         在线核验证书
       </button>
-      <button class="btn btn-primary" @click="handleSaveToAlbum">
-        保存高清证书
+      <button class="btn btn-primary" :disabled="savingCert" @click="handleSaveToAlbum">
+        {{ savingCert ? '正在导出...' : '保存高清证书' }}
       </button>
     </view>
 
@@ -102,9 +110,9 @@
           <view class="popup-close" @click="verifyModalVisible = false">×</view>
         </view>
         <view class="popup-body">
-          <view class="verify-status-tag" :class="{ revoked: currentCert?.status === 2 }">
-            <text class="status-icon">{{ currentCert?.status === 1 ? '✓' : '✕' }}</text>
-            <text class="status-txt">{{ currentCert?.status === 1 ? '官方备案认证有效 (VALID)' : '该凭证已被撤销作废' }}</text>
+          <view class="verify-status-tag" :class="verifyStateClass">
+            <text class="status-icon">{{ verifyStateIcon }}</text>
+            <text class="status-txt">{{ verifyStateText }}</text>
           </view>
           <view class="verify-info-list">
             <view class="info-row">
@@ -158,6 +166,8 @@ const currentIndex = ref(0)
 const verifyModalVisible = ref(false)
 const targetActivityId = ref<number | null>(null)
 const targetCertNo = ref<string>('')
+const loadingCerts = ref(true)
+const savingCert = ref(false)
 
 const currentCert = computed(() => {
   if (certList.value.length === 0) return null
@@ -178,8 +188,31 @@ const maskedStudentName = computed(() => {
   return `${name[0]}*${name[name.length - 1]}`
 })
 
+// 核验弹窗三态：1 有效 / 2 撤销 / 3 过期
+const verifyStateClass = computed(() => {
+  const s = currentCert.value?.status
+  if (s === 2) return 'revoked'
+  if (s === 3) return 'expired'
+  return ''
+})
+const verifyStateIcon = computed(() => (currentCert.value?.status === 1 ? '✓' : '✕'))
+const verifyStateText = computed(() => {
+  const s = currentCert.value?.status
+  if (s === 1) return '官方备案认证有效'
+  if (s === 2) return '该凭证已被撤销作废'
+  if (s === 3) return '该证书已过有效期，仅作存档'
+  return '证书状态未知'
+})
+
+// 印章内圈文字跟随真实签发机构，避免与证书正文的机构矛盾
+const sealIssuerText = computed(() => {
+  const issuer = currentCert.value?.issuer || ''
+  return issuer ? issuer.slice(0, 6) : '防伪验讫'
+})
+
 // 加载学生证书
 const loadCertificates = async () => {
+  loadingCerts.value = true
   try {
     const list = await getMyCertificatesApi()
     certList.value = list
@@ -196,6 +229,8 @@ const loadCertificates = async () => {
     }
   } catch (err: any) {
     uni.showToast({ title: '加载证书失败', icon: 'none' })
+  } finally {
+    loadingCerts.value = false
   }
 }
 
@@ -226,17 +261,142 @@ const handleOnlineVerify = () => {
   verifyModalVisible.value = true
 }
 
-// 保存证书至相册
+// 保存证书至相册：真实把证书版面绘制成 PNG 后导出，不再空转假报成功
 const handleSaveToAlbum = () => {
+  if (!currentCert.value || savingCert.value) return
+  savingCert.value = true
   uni.showLoading({ title: '正在导出高清证书...' })
-  setTimeout(() => {
+  // #ifdef H5
+  try {
+    const dataUrl = renderCertToPng(currentCert.value)
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `${currentCert.value.certificateNo || 'certificate'}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
     uni.hideLoading()
     uni.showModal({
-      title: '证书保存成功',
-      content: '电子结项证书高清图片已成功生成，可用于评奖评优、综测评定及第二课堂学分核验。',
+      title: '证书已导出',
+      content: '高清 PNG 已开始下载，可用于评奖评优、综测评定及第二课堂学分核验。',
       showCancel: false
     })
-  }, 600)
+  } catch (err: any) {
+    uni.hideLoading()
+    uni.showToast({ title: '导出失败，请重试', icon: 'none' })
+  } finally {
+    savingCert.value = false
+  }
+  // #endif
+  // #ifndef H5
+  uni.hideLoading()
+  savingCert.value = false
+  uni.showToast({ title: '图片导出暂仅支持浏览器端', icon: 'none' })
+  // #endif
+}
+
+// 将证书版面按 DOM 版式绘制为 PNG（750x1000 逻辑尺寸，2 倍超采样）
+const renderCertToPng = (cert: MyCertificateItem): string => {
+  const W = 750
+  const H = 1000
+  const S = 2
+  const canvas = document.createElement('canvas')
+  canvas.width = W * S
+  canvas.height = H * S
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas unsupported')
+  ctx.scale(S, S)
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = '#1e3a8a'
+  ctx.lineWidth = 3
+  ctx.strokeRect(24, 24, W - 48, H - 48)
+  ctx.strokeStyle = '#93c5fd'
+  ctx.lineWidth = 1
+  ctx.strokeRect(34, 34, W - 68, H - 68)
+
+  ctx.save()
+  ctx.translate(W / 2, H / 2)
+  ctx.rotate(-Math.PI / 7)
+  ctx.fillStyle = 'rgba(30, 58, 138, 0.05)'
+  ctx.font = 'bold 52px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('CAMPUS CREDENTIAL', 0, 0)
+  ctx.restore()
+
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#64748b'
+  ctx.font = '16px sans-serif'
+  ctx.fillText('UNIVERSITY ACTIVITY CREDENTIAL', W / 2, 110)
+  ctx.fillStyle = '#0f172a'
+  ctx.font = 'bold 44px sans-serif'
+  ctx.fillText('荣誉结项证书', W / 2, 175)
+
+  const body =
+    `兹证明 ${studentName.value} 同学（学号：${studentNo.value}）在参加由 ${cert.issuer} 组织的` +
+    `【${cert.activityTitle}】中，按时出勤签到，表现优异，经考核准予结业，特发此证！`
+  ctx.fillStyle = '#334155'
+  ctx.font = '22px sans-serif'
+  ctx.textAlign = 'left'
+  const maxW = W - 160
+  let line = ''
+  let y = 260
+  for (const ch of body) {
+    if (ctx.measureText(line + ch).width > maxW) {
+      ctx.fillText(line, 80, y)
+      line = ch
+      y += 38
+    } else {
+      line += ch
+    }
+  }
+  if (line) ctx.fillText(line, 80, y)
+
+  if (cert.status !== 1) {
+    const expired = cert.status === 3
+    ctx.strokeStyle = expired ? '#d97706' : '#dc2626'
+    ctx.fillStyle = expired ? 'rgba(217, 119, 6, 0.9)' : 'rgba(220, 38, 38, 0.9)'
+    ctx.lineWidth = 3
+    ctx.save()
+    ctx.translate(W / 2, 560)
+    ctx.rotate(-Math.PI / 12)
+    ctx.strokeRect(-150, -34, 300, 68)
+    ctx.font = 'bold 30px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(expired ? '已过有效期' : '已作废撤销', 0, 12)
+    ctx.restore()
+  }
+
+  ctx.textAlign = 'left'
+  ctx.fillStyle = '#475569'
+  ctx.font = '16px sans-serif'
+  ctx.fillText(`NO: ${cert.certificateNo}`, 80, H - 120)
+  ctx.textAlign = 'right'
+  ctx.fillStyle = '#0f172a'
+  ctx.font = 'bold 20px sans-serif'
+  ctx.fillText(cert.issuer, W - 80, H - 140)
+  ctx.fillStyle = '#64748b'
+  ctx.font = '16px sans-serif'
+  ctx.fillText(cert.issueTime, W - 80, H - 112)
+
+  ctx.strokeStyle = '#dc2626'
+  ctx.lineWidth = 2.5
+  ctx.beginPath()
+  ctx.arc(W - 160, H - 260, 62, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.arc(W - 160, H - 260, 55, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.fillStyle = '#dc2626'
+  ctx.textAlign = 'center'
+  ctx.font = 'bold 13px sans-serif'
+  ctx.fillText(sealIssuerText.value, W - 160, H - 240)
+  ctx.font = '11px sans-serif'
+  ctx.fillText('★ 防伪验讫 ★', W - 160, H - 222)
+
+  return canvas.toDataURL('image/png')
 }
 
 onLoad((query: any) => {
@@ -262,7 +422,7 @@ onMounted(() => {
 }
 
 .cert-nav-header {
-  padding: 44px 16px 12px;
+  padding: calc(var(--status-bar-height, 0px) + 12px) 16px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -455,6 +615,10 @@ onMounted(() => {
 
 .cert-signer-box {
   text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 .cert-signer-box .issuer-name {
@@ -469,7 +633,7 @@ onMounted(() => {
   margin-top: 2px;
 }
 
-.cert-official-seal-svg {
+.cert-seal-wrap {
   position: absolute;
   right: 12px;
   bottom: 16px;
@@ -478,6 +642,32 @@ onMounted(() => {
   transform: rotate(-12deg);
   opacity: 0.9;
   pointer-events: none;
+}
+.cert-official-seal-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.seal-issuer-txt {
+  position: absolute;
+  top: 50px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #dc2626;
+  letter-spacing: 1px;
+}
+.seal-verify-txt {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 8px;
+  color: #dc2626;
 }
 
 /* 操作按钮 */
@@ -590,6 +780,24 @@ onMounted(() => {
 
 .verify-status-tag.revoked .status-txt {
   color: #dc2626;
+}
+.verify-status-tag.expired {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.verify-status-tag.expired .status-icon {
+  color: #d97706;
+}
+.verify-status-tag.expired .status-txt {
+  color: #b45309;
+}
+.cert-empty-wrap {
+  padding: 60px 24px;
+}
+.cert-revoked-tag.expired {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #b45309;
 }
 
 .verify-info-list {

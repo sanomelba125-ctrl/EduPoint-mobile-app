@@ -47,7 +47,7 @@ import type { PageResult } from '@/types/common'
 export type { PageResult }
 
 /**
- * 查询学生当前可用积分与历史累计学分 (GET /api/student/score/balance)
+ * 查询学生当前可用积分与历史累计积分 (GET /api/student/score/balance)
  */
 export function getScoreBalanceApi(): Promise<StudentScoreBalanceVO> {
   return request<StudentScoreBalanceVO>({
@@ -57,7 +57,7 @@ export function getScoreBalanceApi(): Promise<StudentScoreBalanceVO> {
 }
 
 /**
- * 查询学分光荣榜列表 (GET /api/student/score/rank)
+ * 查询积分光荣榜列表 (GET /api/student/score/rank)
  */
 export function getLeaderboardApi(params?: { page?: number; size?: number; college?: string }): Promise<StudentRankResultVO> {
   return request<StudentRankResultVO>({

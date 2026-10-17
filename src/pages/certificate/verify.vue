@@ -30,9 +30,7 @@
       </view>
 
       <view class="quick-tags">
-        <text class="quick-title">快捷体验：</text>
-        <text class="tag-link" @click="selectTag('CERT-2026-ACT2-A89F3B12')">有效证书</text>
-        <text class="tag-link danger" @click="selectTag('CERT-114516-6-6EF1DD1C')">已撤销证书</text>
+        <text class="quick-title">编号可在「我的证书」页或证书纸质存档上找到</text>
       </view>
     </view>
 
@@ -120,7 +118,7 @@ import { ref, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { verifyCertificateApi, type VerifyCertificateResult } from '@/api/certificate'
 
-const inputCode = ref('CERT-2026-ACT2-A89F3B12')
+const inputCode = ref('')
 const loading = ref(false)
 const result = ref<VerifyCertificateResult | null>(null)
 
@@ -135,11 +133,6 @@ onMounted(() => {
     handleVerify()
   }
 })
-
-const selectTag = (no: string) => {
-  inputCode.value = no
-  handleVerify()
-}
 
 const handleVerify = async () => {
   const code = inputCode.value.trim()
@@ -177,7 +170,7 @@ const handleBack = () => {
 }
 
 .verify-header {
-  padding: 44px 16px 12px;
+  padding: calc(var(--status-bar-height, 0px) + 12px) 16px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -275,22 +268,6 @@ const handleBack = () => {
   color: #94a3b8;
 }
 
-.tag-link {
-  font-size: 12px;
-  color: #2563eb;
-  background: #eff6ff;
-  border: 1px solid #dbeafe;
-  padding: 2px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.tag-link.danger {
-  color: #dc2626;
-  background: #fef2f2;
-  border-color: #fee2e2;
-}
-
 .result-wrap {
   padding: 0 16px;
 }
@@ -346,6 +323,17 @@ const handleBack = () => {
 
 .result-card.revoked .status-main {
   color: #dc2626;
+}
+.result-card.expired {
+  border-color: #fde68a;
+  box-shadow: 0 4px 16px rgba(217, 119, 6, 0.08);
+}
+.result-card.expired .status-banner {
+  background: #fffbeb;
+  border-bottom-color: #fef3c7;
+}
+.result-card.expired .status-main {
+  color: #b45309;
 }
 
 .status-sub {

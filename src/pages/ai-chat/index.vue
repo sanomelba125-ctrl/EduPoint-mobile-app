@@ -2,6 +2,8 @@
 import { ref, reactive, nextTick, onMounted, onUnmounted } from 'vue'
 import { getRecommendedFaqsApi, getChatHistoryApi, clearChatHistoryApi, type AiFaqItem } from '@/api/ai'
 import { useUserStore } from '@/stores'
+import { parseMarkdownLines, type MdLine, type MdSeg } from '@/utils/markdown'
+import { resolveImageUrl } from '@/utils/image'
 
 interface ChatMessage {
   id: string
@@ -33,6 +35,40 @@ const formatToolName = (name?: string) => {
   return toolNameMap[name] || name
 }
 
+// 工具调用三态文案：失败时不得宣称"已调取业务事实"
+const toolChipText = (tc: NonNullable<ChatMessage['toolCall']>) => {
+  const name = formatToolName(tc.toolName)
+  if (tc.status === 'CALLING') return `正在调用【${name}】查询...`
+  if (tc.status === 'FAILED') return `【${name}】查询失败，以下为通用解答`
+  return `已调取【${name}】业务事实`
+}
+
+/**
+ * 助手消息 Markdown 渲染缓存。
+ * 按消息对象缓存解析结果，仅当 content 变化时才重新解析 ——
+ * 流式输出时每收到一个分块都会触发重渲染，缓存可避免整段反复解析。
+ */
+const mdCache = new WeakMap<object, { src: string; lines: MdLine[] }>()
+
+/** 取（或惰性解析）助手消息的 Markdown 渲染行；学生消息不做处理 */
+const mdLinesOf = (msg: ChatMessage): MdLine[] => {
+  if (msg.role !== 'assistant') return []
+  const src = msg.content || ''
+  let entry = mdCache.get(msg)
+  if (!entry || entry.src !== src) {
+    entry = { src, lines: parseMarkdownLines(src) }
+    mdCache.set(msg, entry)
+  }
+  return entry.lines
+}
+
+/** 行内片段（加粗/斜体/行内代码）的样式类 */
+const segCls = (sg: MdSeg) => ({
+  'md-bold': !!sg.bold,
+  'md-italic': !!sg.italic,
+  'md-inline-code': !!sg.code
+})
+
 const userStore = useUserStore()
 
 // 消息列表与加载状态
@@ -54,6 +90,8 @@ const formatTime = () => {
 
 // 页面加载获取历史对话记录
 const fetchChatHistory = async () => {
+  // 加载期间用户可能已抢发消息，历史返回后必须保留这些本地消息，否则会覆盖掉正在流式生成的回答
+  const pendingLocal = messages.value.slice()
   try {
     isLoadingHistory.value = true
     const token = uni.getStorageSync('student_token')
@@ -79,7 +117,7 @@ const fetchChatHistory = async () => {
         } : undefined,
         time: item.time || (item.createTime ? item.createTime.substring(11, 16) : formatTime())
       }))
-      messages.value = formatted
+      messages.value = [...formatted, ...pendingLocal]
       forceScrollToBottom()
     }
   } catch (e) {
@@ -105,17 +143,13 @@ const fetchRecommendedFaqs = async () => {
   }
 }
 
-// 自动滚动到消息列表底部 (平滑节流)
+// 流式期间的节流滚动：scroll-into-view 同值不触发，需经 forceScrollToBottom 空值中转
 let scrollThrottleTimer: any = null
 const scrollToBottom = () => {
   if (scrollThrottleTimer) return
   scrollThrottleTimer = setTimeout(() => {
     scrollThrottleTimer = null
-    nextTick(() => {
-      if (messages.value.length > 0) {
-        scrollIntoViewId.value = `msg-${messages.value[messages.value.length - 1].id}`
-      }
-    })
+    forceScrollToBottom()
   }, 60)
 }
 
@@ -213,10 +247,11 @@ const sendMessage = async (questionText?: string) => {
     time: formatTime()
   })
   messages.value.push(assistantMsg)
-  const assistantIndex = messages.value.length - 1
   forceScrollToBottom()
 
   isGenerating.value = true
+  // 声明在 try 之外：catch 块需要读取它来区分"用户主动中断"与"网络异常"
+  let isManualAbort = false
 
   // 3. 构建原生 Fetch SSE 请求
   try {
@@ -247,9 +282,6 @@ const sendMessage = async (questionText?: string) => {
 
       if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
         assistantMsg.isStreaming = false
-        if (messages.value[assistantIndex]) {
-          messages.value[assistantIndex].isStreaming = false
-        }
         return
       }
 
@@ -259,15 +291,9 @@ const sendMessage = async (questionText?: string) => {
           const data = JSON.parse(jsonStr)
           if (data.content) {
             assistantMsg.content += data.content
-            if (messages.value[assistantIndex]) {
-              messages.value[assistantIndex].content = assistantMsg.content
-            }
           }
           if (data.source) {
             assistantMsg.source = data.source
-            if (messages.value[assistantIndex]) {
-              messages.value[assistantIndex].source = data.source
-            }
           }
           if (data.toolCall) {
             assistantMsg.toolCall = {
@@ -278,15 +304,9 @@ const sendMessage = async (questionText?: string) => {
               resultFactJson: data.toolCall.resultFactJson,
               executionTimeMs: data.toolCall.executionTimeMs
             }
-            if (messages.value[assistantIndex]) {
-              messages.value[assistantIndex].toolCall = assistantMsg.toolCall
-            }
           }
           if (data.finish) {
             assistantMsg.isStreaming = false
-            if (messages.value[assistantIndex]) {
-              messages.value[assistantIndex].isStreaming = false
-            }
           }
           scrollToBottom()
         } catch (e) {
@@ -294,8 +314,6 @@ const sendMessage = async (questionText?: string) => {
         }
       }
     }
-
-    let isManualAbort = false
 
     // #ifdef H5
     const controller = new AbortController()
@@ -440,28 +458,18 @@ const sendMessage = async (questionText?: string) => {
     // #endif
   } catch (err: any) {
     if (isManualAbort || err?.name === 'AbortError' || err?.errMsg?.includes('abort')) {
-      logInfo('用户主动中断回答')
+      // 用户主动中断：保留已生成的内容，不追加错误文案
     } else {
       assistantMsg.content += (assistantMsg.content ? '\n\n' : '') +
         '⚠️ 【网络连接提示】小助手未能及时收到服务器回复，请检查网络或稍后重试。'
-      if (messages.value[assistantIndex]) {
-        messages.value[assistantIndex].content = assistantMsg.content
-      }
       uni.showToast({ title: '连接中断或超时', icon: 'none' })
     }
   } finally {
     assistantMsg.isStreaming = false
-    if (messages.value[assistantIndex]) {
-      messages.value[assistantIndex].isStreaming = false
-    }
     isGenerating.value = false
     currentAbortController.value = null
     forceScrollToBottom()
   }
-}
-
-const logInfo = (msg: string) => {
-  // 打印调试日志
 }
 
 // 快速输入查积分等快捷指令
@@ -488,19 +496,21 @@ onUnmounted(() => {
 
 <template>
   <view class="ai-chat-page">
-    <!-- 顶部状态栏提示 -->
+    <!-- 在线状态细条
+         原方案是第二层深色横条（与导航栏同色），首屏被两层深色压掉约 12%。
+         改为白底浅色 + 压缩高度 + 弱化文案层级：在线状态用绿色点表达，
+         "双通道保障"降级为灰色小字，视觉上只保留导航栏一层深色。 -->
     <view class="header-status-bar">
       <view class="status-left">
         <view class="pulse-dot"></view>
-        <text class="status-title">校园助手小智</text>
-        <text class="status-badge">双通道保障</text>
+        <text class="status-title">在线</text>
+        <text class="status-sep">·</text>
+        <text class="status-sub">知识库 + 大模型双通道</text>
       </view>
-      <view class="status-actions">
-        <button class="action-btn" @click="handleClearChat" title="清空对话">
-          <text class="action-icon">🗑️</text>
-          <text class="action-text">清空</text>
-        </button>
-      </view>
+      <button class="action-btn" @click="handleClearChat">
+        <app-icon name="trash" :size="24" color="#64748b" />
+        <text class="action-text">清空</text>
+      </button>
     </view>
 
     <!-- 消息流滚动列表 -->
@@ -510,11 +520,10 @@ onUnmounted(() => {
       :scroll-into-view="scrollIntoViewId"
       scroll-with-animation
     >
-      <!-- 首次进入迎宾引导卡片 -->
-      <view class="welcome-card" v-if="messages.length === 0">
+      <!-- 首次进入迎宾引导卡片（历史加载完成前不渲染，避免欢迎卡闪现后跳变） -->
+      <view class="welcome-card" v-if="!isLoadingHistory && messages.length === 0">
         <view class="bot-avatar-large">
-          <text class="bot-icon">🤖</text>
-          <view class="bot-ring"></view>
+          <app-icon name="bot" :size="72" color="#2563eb" stroke-width="1.6" />
         </view>
         <text class="welcome-title">你好，同学！我是小智</text>
         <text class="welcome-desc">
@@ -524,13 +533,13 @@ onUnmounted(() => {
 
         <!-- 登录态个性化提示 -->
         <view class="personal-hint-box" v-if="userStore.isLoggedIn">
-          <text class="hint-icon">✨</text>
+          <app-icon name="sparkles" :size="26" color="#2563eb" />
           <text class="hint-text">
             已识别学生学籍【{{ userStore.userInfo?.name || '同学' }} ({{ userStore.userInfo?.studentNo }})】，可直接查询积分、活动、提货码！
           </text>
         </view>
         <view class="personal-hint-box unlogin" v-else @click="goToLogin">
-          <text class="hint-icon">🎓</text>
+          <app-icon name="graduate" :size="26" color="#2563eb" />
           <text class="hint-text">
             当前未登录，个人数据查询需要先登录。<text class="link-text">点此登录个人账号</text>
           </text>
@@ -538,7 +547,7 @@ onUnmounted(() => {
 
         <!-- 常用快捷提问胶囊 -->
         <view class="recommend-title">
-          <text class="rec-icon">💡</text>
+          <app-icon name="sparkles" :size="24" color="#f59e0b" />
           <text>大家都在问：</text>
         </view>
         <view class="faq-chips-grid">
@@ -565,6 +574,12 @@ onUnmounted(() => {
         </view>
       </view>
 
+      <!-- 历史记录加载占位 -->
+      <view class="history-loading" v-else-if="isLoadingHistory && messages.length === 0">
+        <app-icon name="bot" :size="56" color="#cbd5e1" stroke-width="1.5" />
+        <text class="history-loading-txt">正在载入历史会话...</text>
+      </view>
+
       <!-- 消息气泡流 -->
       <view class="message-list" v-else>
         <view
@@ -576,7 +591,7 @@ onUnmounted(() => {
         >
           <!-- 机器人头像 -->
           <view class="msg-avatar" v-if="msg.role === 'assistant'">
-            <text class="avatar-emoji">🤖</text>
+            <app-icon name="bot" :size="40" color="#ffffff" />
           </view>
 
           <!-- 气泡正文 -->
@@ -586,24 +601,56 @@ onUnmounted(() => {
               <text v-if="msg.source === 'KNOWLEDGE_BASE'" class="source-pill kb">官方权威解答</text>
               <text v-else-if="msg.source === 'TOOL_AGENT'" class="source-pill tool">Function Calling 智能调度</text>
               <text v-else-if="msg.source === 'LOCAL_AGENT'" class="source-pill synth">本地智能工具引擎</text>
-              <text v-else-if="msg.source === 'LOCAL_SYNTHESIS'" class="source-pill synth">个人业务实时核对</text>
               <text v-else-if="msg.source === 'SENSENOVA'" class="source-pill ai">商汤 SenseNova 6.8</text>
               <text v-else-if="msg.source === 'QWEN'" class="source-pill ai">通义千问 Qwen 3.8</text>
               <text v-else class="source-pill ai">AI 智能推理</text>
             </view>
 
-            <!-- Function Calling 状态指示卡片 -->
-            <view class="msg-tool-chip" v-if="msg.role === 'assistant' && msg.toolCall">
-              <text class="tool-chip-icon">🛠️</text>
+            <!-- Function Calling 状态指示卡片（区分调用中/成功/失败，失败不得宣称已调取事实） -->
+            <view
+              class="msg-tool-chip"
+              :class="{ failed: msg.toolCall && msg.toolCall.status === 'FAILED' }"
+              v-if="msg.role === 'assistant' && msg.toolCall"
+            >
+              <app-icon name="zap" :size="24" :color="msg.toolCall.status === 'FAILED' ? '#b91c1c' : '#0284c7'" />
               <text class="tool-chip-text">
-                {{ msg.toolCall.status === 'CALLING' ? `正在调用【${formatToolName(msg.toolCall.toolName)}】查询...` : `已调取【${formatToolName(msg.toolCall.toolName)}】业务事实` }}
+                {{ toolChipText(msg.toolCall) }}
               </text>
               <text class="tool-chip-time" v-if="msg.toolCall.executionTimeMs">{{ msg.toolCall.executionTimeMs }}ms</text>
             </view>
 
             <view class="msg-bubble" :class="msg.role">
-              <text class="bubble-text" :selectable="true">{{ msg.content }}</text>
-              <!-- 打字机跳动光标 -->
+              <!-- 助手回复：按 Markdown 结构渲染（标题/加粗/列表/引用/代码/表格） -->
+              <template v-if="msg.role === 'assistant'">
+                <view
+                  v-for="(ln, li) in mdLinesOf(msg)"
+                  :key="li"
+                  class="md-line"
+                  :class="ln.cls"
+                >
+                  <view v-if="ln.cls === 'md-hr'" class="md-hr-bar"></view>
+
+                  <text v-else-if="ln.cls === 'md-code-block'" class="md-code-text" :selectable="true">{{ ln.raw }}</text>
+
+                  <view v-else-if="ln.cells" class="md-tr-inner">
+                    <text
+                      v-for="(cell, ci) in ln.cells"
+                      :key="ci"
+                      class="md-td"
+                      :class="{ 'md-th': ln.header }"
+                    ><text v-for="(sg, si) in cell" :key="si" :class="segCls(sg)">{{ sg.text }}</text></text>
+                  </view>
+
+                  <template v-else>
+                    <text v-if="ln.bullet" class="md-bullet">{{ ln.bullet }}</text>
+                    <text class="md-text" :selectable="true"><text v-for="(sg, si) in ln.segs" :key="si" :class="segCls(sg)">{{ sg.text }}</text></text>
+                  </template>
+                </view>
+              </template>
+
+              <!-- 学生消息：保持纯文本 -->
+              <text v-else class="bubble-text" :selectable="true">{{ msg.content }}</text>
+
               <text class="typing-cursor" v-if="msg.isStreaming"></text>
             </view>
 
@@ -611,8 +658,15 @@ onUnmounted(() => {
           </view>
 
           <!-- 学生用户头像 -->
+          <!-- 学生头像：优先使用本人上传的真实头像 -->
           <view class="msg-avatar user-avatar" v-if="msg.role === 'user'">
-            <text class="avatar-emoji">🎓</text>
+            <image
+              v-if="userStore.userInfo?.avatar"
+              class="msg-avatar-img"
+              :src="resolveImageUrl(userStore.userInfo.avatar)"
+              mode="aspectFill"
+            />
+            <app-icon v-else name="graduate" :size="40" color="#ffffff" />
           </view>
         </view>
       </view>
@@ -627,16 +681,16 @@ onUnmounted(() => {
       <scroll-view class="horizontal-prompts-bar" scroll-x v-if="messages.length > 0 && !isGenerating">
         <view class="prompts-wrap">
           <view class="prompt-pill" @click="handleQuickAsk('我当前还剩多少积分？')">
-            <text>💰 查可用积分</text>
+            <app-icon name="coins" :size="24" color="#f59e0b" /><text>查可用积分</text>
           </view>
           <view class="prompt-pill" @click="handleQuickAsk('我参与过哪些活动？')">
-            <text>🚩 查我的活动</text>
+            <app-icon name="calendar" :size="24" color="#2563eb" /><text>查我的活动</text>
           </view>
           <view class="prompt-pill" @click="handleQuickAsk('如何获得活动积分？')">
-            <text>📋 积分规则</text>
+            <app-icon name="file-text" :size="24" color="#10b981" /><text>积分规则</text>
           </view>
           <view class="prompt-pill" @click="handleQuickAsk('打卡超出范围怎么办？')">
-            <text>📍 定位打卡帮助</text>
+            <app-icon name="map-pin" :size="24" color="#ef4444" /><text>定位打卡帮助</text>
           </view>
         </view>
       </scroll-view>
@@ -672,7 +726,7 @@ onUnmounted(() => {
           :disabled="inputContent.trim().length === 0 || isGenerating"
           @click="() => sendMessage()"
         >
-          <text class="send-arrow">➔</text>
+          <app-icon name="send" :size="34" :color="inputContent.trim().length > 0 && !isGenerating ? '#ffffff' : '#64748b'" />
         </button>
       </view>
     </view>
@@ -683,74 +737,77 @@ onUnmounted(() => {
 .ai-chat-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* H5 端 uni-app 会渲染原生导航栏并把内容整体下移，直接用 100vh 会让页面比视口高出
+     一个导航栏的高度，底部输入框被裁掉（实测 footer 底部超出视口 44px）。
+     减去 --window-top（H5 为导航栏高度，小程序端为 0）后两端一致。 */
+  height: calc(100vh - var(--window-top));
   background-color: #f8fafc;
   box-sizing: border-box;
 }
 
-/* 顶部状态栏 */
+/* 在线状态细条（白底浅色，与导航栏形成层级差异，而非叠加第二层深色） */
 .header-status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20rpx 32rpx;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  color: #ffffff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8rpx 24rpx;
+  background-color: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
   flex-shrink: 0;
 }
 
 .status-left {
   display: flex;
   align-items: center;
-  gap: 14rpx;
+  gap: 10rpx;
 }
 
 .pulse-dot {
-  width: 16rpx;
-  height: 16rpx;
+  width: 12rpx;
+  height: 12rpx;
   border-radius: 50%;
   background-color: #10b981;
-  box-shadow: 0 0 10rpx #10b981;
-  animation: pulseAnim 2s infinite ease-in-out;
+  flex-shrink: 0;
+  animation: pulseAnim 2.4s infinite ease-in-out;
 }
 
+/* 只用透明度呼吸，比缩放更含蓄，避免在静态界面上抢注意力 */
 @keyframes pulseAnim {
-  0% { transform: scale(0.9); opacity: 0.8; }
-  50% { transform: scale(1.3); opacity: 1; }
-  100% { transform: scale(0.9); opacity: 0.8; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .status-title {
-  font-size: 28rpx;
-  font-weight: 700;
-  letter-spacing: 0.5rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #10b981;
 }
 
-.status-badge {
-  font-size: 20rpx;
-  color: #38bdf8;
-  background-color: rgba(56, 189, 248, 0.15);
-  padding: 4rpx 12rpx;
-  border-radius: 16rpx;
-  font-weight: 500;
+.status-sep {
+  font-size: 22rpx;
+  color: #cbd5e1;
+}
+
+.status-sub {
+  font-size: 22rpx;
+  color: #94a3b8;
 }
 
 .action-btn {
   display: flex;
   align-items: center;
-  gap: 6rpx;
-  background-color: rgba(255, 255, 255, 0.12);
+  gap: 4rpx;
+  background-color: transparent;
   border: none;
-  padding: 6rpx 16rpx;
-  border-radius: 24rpx;
-  color: #cbd5e1;
+  padding: 4rpx 10rpx;
+  border-radius: 20rpx;
+  color: #64748b;
   line-height: 1.4;
   margin: 0;
 }
 
-.action-icon {
-  font-size: 22rpx;
+.action-btn:active {
+  background-color: #f1f5f9;
 }
 
 .action-text {
@@ -792,9 +849,6 @@ onUnmounted(() => {
   box-shadow: 0 8rpx 24rpx rgba(59, 130, 246, 0.35);
 }
 
-.bot-icon {
-  font-size: 52rpx;
-}
 
 .welcome-title {
   font-size: 32rpx;
@@ -827,10 +881,6 @@ onUnmounted(() => {
   text-align: left;
 }
 
-.hint-icon {
-  font-size: 28rpx;
-  flex-shrink: 0;
-}
 
 .hint-text {
   font-size: 22rpx;
@@ -927,7 +977,10 @@ onUnmounted(() => {
 
 .message-row.user {
   align-self: flex-end;
-  flex-direction: row-reverse;
+  /* DOM 顺序已是「气泡 → 头像」，用默认 row 就能让头像落在气泡右侧。
+     此前误加 row-reverse 会把头像推到气泡左边，与「自己的消息靠右」的对话语义相反。 */
+  flex-direction: row;
+  justify-content: flex-end;
 }
 
 .message-row.assistant {
@@ -944,6 +997,28 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
   box-shadow: 0 4rpx 12rpx rgba(59, 130, 246, 0.25);
+  overflow: hidden;
+}
+.msg-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.history-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  padding: 120rpx 0;
+}
+.history-loading-txt {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+.msg-tool-chip.failed {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
 }
 
 .user-avatar {
@@ -951,14 +1026,16 @@ onUnmounted(() => {
   box-shadow: 0 4rpx 12rpx rgba(14, 165, 233, 0.25);
 }
 
-.avatar-emoji {
-  font-size: 34rpx;
-}
 
 .msg-bubble-wrap {
   display: flex;
   flex-direction: column;
-  max-width: 82%;
+  flex: 1;
+  /* 允许 flex 子项收缩，否则长文本/表格会把气泡撑破容器 */
+  min-width: 0;
+  /* 行宽已由 .message-row 的 max-width 限制，这里不再叠加百分比，
+     否则两层 max-width 相乘（90% × 82%）会让气泡只有约 74% 宽，长回复被挤成细条 */
+  max-width: 100%;
 }
 
 .message-row.user .msg-bubble-wrap {
@@ -1010,9 +1087,6 @@ onUnmounted(() => {
   color: #475569;
 }
 
-.tool-chip-icon {
-  font-size: 24rpx;
-}
 
 .tool-chip-text {
   font-size: 22rpx;
@@ -1052,6 +1126,137 @@ onUnmounted(() => {
 
 .bubble-text {
   white-space: pre-wrap;
+}
+
+/* ==================== 助手消息 Markdown 渲染 ==================== */
+.md-line {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.md-line + .md-line {
+  margin-top: 10rpx;
+}
+
+.md-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 28rpx;
+  line-height: 1.7;
+  color: #1e293b;
+  word-break: break-word;
+}
+
+/* 标题层级：用字重与留白拉开层次，而不是靠更多颜色 */
+.md-h {
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.5;
+}
+.md-h1 { font-size: 34rpx; margin-top: 16rpx; }
+.md-h2 { font-size: 32rpx; margin-top: 14rpx; }
+.md-h3 { font-size: 30rpx; margin-top: 12rpx; }
+.md-h4 { font-size: 28rpx; margin-top: 10rpx; }
+.md-line.md-h:first-child { margin-top: 0; }
+
+/* 段落 */
+.md-p {
+  font-size: 28rpx;
+  line-height: 1.7;
+  color: #1e293b;
+}
+
+/* 列表 */
+.md-li {
+  padding-left: 2rpx;
+}
+.md-bullet {
+  flex-shrink: 0;
+  font-size: 28rpx;
+  line-height: 1.7;
+  color: #3b82f6;
+  margin-right: 12rpx;
+  font-weight: 700;
+}
+
+/* 引用块 */
+.md-quote {
+  border-left: 6rpx solid #93c5fd;
+  background-color: #f8fafc;
+  border-radius: 0 10rpx 10rpx 0;
+  padding: 10rpx 16rpx;
+  margin: 6rpx 0;
+}
+
+/* 分隔线 */
+.md-hr-bar {
+  width: 100%;
+  height: 2rpx;
+  background-color: #e2e8f0;
+  margin: 14rpx 0;
+}
+
+/* 行内代码 */
+.md-inline-code {
+  background-color: #f1f5f9;
+  color: #1d4ed8;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  font-size: 26rpx;
+}
+
+/* 代码块 */
+.md-code-block {
+  display: block;
+  width: 100%;
+  background-color: #0f172a;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+}
+.md-code-text {
+  font-size: 24rpx;
+  line-height: 1.65;
+  color: #e2e8f0;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* 强调 */
+.md-bold { font-weight: 700; color: #0f172a; }
+.md-italic { font-style: italic; color: #64748b; }
+
+/* 表格 */
+.md-tr {
+  display: block;
+  margin: 4rpx 0;
+}
+.md-tr-inner {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  border-bottom: 1rpx solid #e2e8f0;
+}
+.md-tr-head .md-tr-inner {
+  border-bottom: 1rpx solid #cbd5e1;
+}
+.md-td {
+  flex: 1;
+  min-width: 0;
+  font-size: 24rpx;
+  line-height: 1.6;
+  padding: 8rpx 8rpx;
+  color: #334155;
+  word-break: break-word;
+}
+.md-th {
+  font-weight: 700;
+  color: #0f172a;
+  background-color: #f1f5f9;
+}
+.md-th.md-td {
+  border-radius: 6rpx 6rpx 0 0;
 }
 
 /* 打字机闪烁光标 */
@@ -1104,7 +1309,9 @@ onUnmounted(() => {
 }
 
 .prompt-pill {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
   font-size: 22rpx;
   color: #475569;
   background-color: #f1f5f9;
@@ -1217,8 +1424,4 @@ onUnmounted(() => {
   box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.35);
 }
 
-.send-arrow {
-  font-size: 32rpx;
-  line-height: 1;
-}
 </style>

@@ -4,6 +4,7 @@ import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import { getGiftListApi, type GiftItem } from '@/api/gift'
+import { resolveImageUrl } from '@/utils/image'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
@@ -101,10 +102,10 @@ onShow(() => {
     <view class="mall-banner-card">
       <view class="mall-balance-top">
         <view>
-          <view class="mall-balance-label">当前可用积分 (current_points)</view>
+          <view class="mall-balance-label">当前可用积分</view>
           <view class="mall-balance-value">
             {{ currentPoints }}
-            <text class="mall-pts-unit">pts</text>
+            <text class="mall-pts-unit">积分</text>
           </view>
         </view>
         <view class="balance-rank-badge" @click="goToRank">
@@ -114,7 +115,7 @@ onShow(() => {
 
       <view class="mall-balance-actions">
         <view class="mall-action-link" @click="goToOrders">
-          <text class="action-icon">📋</text>
+          <app-icon name="file-text" :size="26" color="#2563eb" />
           <text class="action-text">我的兑换订单 (出示提货码)</text>
           <text class="action-arrow">></text>
         </view>
@@ -140,7 +141,7 @@ onShow(() => {
           :class="['filter-tab-pill', currentTab === 'FEATURED' ? 'active' : '']"
           @click="handleTabChange('FEATURED')"
         >
-          精选推荐
+          库存充足
         </view>
       </view>
       <text class="strip-tip">凭提货码线下核销</text>
@@ -157,12 +158,12 @@ onShow(() => {
         <view class="gift-thumb-box">
           <image
             v-if="item.image"
-            :src="item.image"
+            :src="resolveImageUrl(item.image)"
             mode="aspectFill"
             class="thumb-img"
           />
           <view v-else class="thumb-placeholder">
-            <text class="placeholder-icon">🎁</text>
+            <app-icon name="gift" :size="64" color="#cbd5e1" stroke-width="1.6" />
           </view>
           <view v-if="item.stock <= 0" class="out-of-stock-mask">
             已兑罄
@@ -173,7 +174,7 @@ onShow(() => {
           <view class="gift-item-title">{{ item.name }}</view>
           <view class="gift-pts-row">
             <text class="pts-number">{{ item.pointsCost }}</text>
-            <text class="pts-unit"> pts</text>
+            <text class="pts-unit"> 积分</text>
           </view>
           <view class="gift-sub-row">
             <text class="stock-text">库存 {{ item.stock }} 件</text>
@@ -189,7 +190,7 @@ onShow(() => {
             >
               {{
                 item.stock <= 0
-                  ? '补货中'
+                  ? '已兑罄'
                   : item.pointsCost <= currentPoints
                   ? '可兑换'
                   : '积分不足'
@@ -201,10 +202,12 @@ onShow(() => {
     </view>
 
     <!-- 空状态 -->
-    <view v-if="!loading && filteredGifts.length === 0" class="empty-wrap">
-      <text class="empty-icon">📦</text>
-      <text class="empty-text">当前暂无可兑换的礼品</text>
-    </view>
+    <app-empty
+      v-if="!loading && filteredGifts.length === 0"
+      icon="shopping-bag"
+      title="当前暂无可兑换的礼品"
+      desc="礼品会不定期补货，稍后再来看看"
+    />
 
     <!-- 分页触底加载状态提示 -->
     <view v-if="filteredGifts.length > 0" class="load-more-status">
@@ -320,20 +323,20 @@ onShow(() => {
   border-radius: 28rpx;
   font-size: 24rpx;
   font-weight: 500;
-  color: #606266;
+  color: #475569;
   background: #f0f2f5;
-  border: 1rpx solid #e4e7ed;
+  border: 1rpx solid #e2e8f0;
 }
 
 .filter-tab-pill.active {
-  background: #409eff;
+  background: #2563eb;
   color: #ffffff;
-  border-color: #409eff;
+  border-color: #2563eb;
 }
 
 .strip-tip {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .gift-grid {
@@ -346,7 +349,7 @@ onShow(() => {
 .gift-item-card {
   background: #ffffff;
   border-radius: 12rpx;
-  border: 1rpx solid #ebeef5;
+  border: 1rpx solid #e2e8f0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -400,7 +403,7 @@ onShow(() => {
 .gift-item-title {
   font-size: 26rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
   line-height: 1.4;
   margin-bottom: 12rpx;
   display: -webkit-box;
@@ -413,7 +416,7 @@ onShow(() => {
 .gift-pts-row {
   display: flex;
   align-items: baseline;
-  color: #e6a23c;
+  color: #f59e0b;
   font-weight: 700;
   margin-top: auto;
 }
@@ -424,7 +427,7 @@ onShow(() => {
 
 .pts-unit {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   font-weight: normal;
 }
 
@@ -437,37 +440,22 @@ onShow(() => {
 }
 
 .stock-text {
-  color: #909399;
+  color: #64748b;
 }
 
 .afford-status.can {
-  color: #67c23a;
+  color: #10b981;
   font-weight: 500;
 }
 
 .afford-status.cannot {
-  color: #909399;
+  color: #64748b;
 }
 
 .afford-status.empty {
-  color: #f56c6c;
+  color: #ef4444;
 }
 
-.empty-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 120rpx 0;
-  color: #909399;
-}
 
-.empty-icon {
-  font-size: 80rpx;
-  margin-bottom: 16rpx;
-}
 
-.empty-text {
-  font-size: 26rpx;
-}
 </style>

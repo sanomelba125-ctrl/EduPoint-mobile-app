@@ -94,18 +94,18 @@ export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatus
   if (isArchived) {
     statusLabel = '已下架'
     statusType = 'info'
+  } else if (myStatus === 'COMPLETED') {
+    // 已完成打卡优先于"已截止"：否则同屏会出现灰色"已截止"徽章与绿色"已完成"按钮互相矛盾
+    statusLabel = '已打卡'
+    statusType = 'success'
   } else if (isEnded) {
     statusLabel = '已截止'
     statusType = 'info'
-  } else if (myStatus === 'COMPLETED') {
-    statusLabel = '已打卡'
-    statusType = 'success'
   } else if (myStatus === 'ENROLLED') {
     statusLabel = '已报名'
     statusType = 'primary'
   } else if (myStatus === 'WAITLIST') {
-    const qNum = act.myQueueNumber || 1
-    statusLabel = `候补第${qNum}位`
+    statusLabel = act.myQueueNumber ? `候补第${act.myQueueNumber}位` : '候补排队中'
     statusType = 'warning'
   } else if (isNotStarted) {
     statusLabel = '未开始'
@@ -152,7 +152,7 @@ export function getActivityStatusInfo(act?: ActivityItem | null): ActivityStatus
       isEnded,
       isArchived,
       actionType: 'DISABLED',
-      buttonText: '已完成出勤打卡 · 学分已入账',
+      buttonText: '已完成出勤打卡 · 积分已入账',
       buttonClass: 'btn-success-disabled',
       disabled: true,
       canCancel: false
@@ -333,7 +333,7 @@ export function promptCancelSignupModal(options: PromptCancelSignupOptions) {
       ? `确定退出${actName}的候补排队吗？退出后若重新候补需要重新按顺序排队。`
       : `确定取消${actName}的正式报名吗？取消后名额将自动释放并顺延给排队候补的同学。`,
     confirmText: isWait ? '退出候补' : '确认取消',
-    confirmColor: '#f56c6c',
+    confirmColor: '#ef4444',
     cancelText: isWait ? '再想想' : '保留名额',
     success: async (res) => {
       if (!res.confirm) return

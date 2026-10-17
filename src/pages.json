@@ -69,6 +69,7 @@
     {
       "path": "pages/activity/checkin",
       "style": {
+        "navigationStyle": "custom",
         "navigationBarTitleText": "现场扫码考勤打卡",
         "navigationBarBackgroundColor": "#0f172a",
         "navigationBarTextStyle": "white"
@@ -91,6 +92,7 @@
     {
       "path": "pages/certificate/index",
       "style": {
+        "navigationStyle": "custom",
         "navigationBarTitleText": "权威电子结项证书",
         "navigationBarBackgroundColor": "#0f172a",
         "navigationBarTextStyle": "white"
@@ -99,6 +101,7 @@
     {
       "path": "pages/certificate/verify",
       "style": {
+        "navigationStyle": "custom",
         "navigationBarTitleText": "电子荣誉证书真伪核验",
         "navigationBarBackgroundColor": "#ffffff",
         "navigationBarTextStyle": "black"
@@ -123,26 +126,34 @@
     "backgroundColor": "#f5f6f8"
   },
   "tabBar": {
-    "color": "#909399",
-    "selectedColor": "#409EFF",
+    "color": "#64748b",
+    "selectedColor": "#2563eb",
     "borderStyle": "black",
     "backgroundColor": "#ffffff",
     "list": [
       {
         "pagePath": "pages/activity/index",
-        "text": "活动打卡"
+        "text": "活动打卡",
+        "iconPath": "static/tabbar/activity.png",
+        "selectedIconPath": "static/tabbar/activity-active.png"
       },
       {
         "pagePath": "pages/gift/index",
-        "text": "积分商城"
+        "text": "积分商城",
+        "iconPath": "static/tabbar/gift.png",
+        "selectedIconPath": "static/tabbar/gift-active.png"
       },
       {
         "pagePath": "pages/rank/index",
-        "text": "排行榜"
+        "text": "排行榜",
+        "iconPath": "static/tabbar/rank.png",
+        "selectedIconPath": "static/tabbar/rank-active.png"
       },
       {
         "pagePath": "pages/my/index",
-        "text": "我的"
+        "text": "我的",
+        "iconPath": "static/tabbar/my.png",
+        "selectedIconPath": "static/tabbar/my-active.png"
       }
     ]
   }

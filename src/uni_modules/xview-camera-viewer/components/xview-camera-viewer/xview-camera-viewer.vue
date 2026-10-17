@@ -760,7 +760,7 @@ defineExpose({
   position: absolute;
   width: 40rpx;
   height: 40rpx;
-  border-color: #409eff;
+  border-color: #2563eb;
   border-style: solid;
 }
 

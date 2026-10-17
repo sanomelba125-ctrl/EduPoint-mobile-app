@@ -84,18 +84,17 @@ onShow(() => {
     <!-- 顶部领奖台区域 -->
     <view class="rank-top-hero">
       <view class="rank-subtitle">
-        依据历史累计获取总积分 (total_points) 排序 · 礼品兑换不扣减榜单排名
+        按历史累计获取的总积分排名 · 礼品兑换不扣减排名
       </view>
 
       <view v-if="rankData.records.length > 0" class="podium-wrap">
-        <!-- 亚军 2 -->
+        <!-- 亚军 2（皇冠为冠军专属，这里不戴） -->
         <view v-if="topSecond" class="podium-col col-second">
           <view class="podium-avatar-box">
-            <text class="crown-icon">👑</text>
             <text class="avatar-letter">{{ topSecond.name ? topSecond.name.charAt(0) : '2' }}</text>
           </view>
           <view class="podium-name">{{ topSecond.name }}</view>
-          <view class="podium-pts">{{ topSecond.totalPoints }} pts</view>
+          <view class="podium-pts">{{ topSecond.totalPoints }} 积分</view>
           <view class="podium-base">
             <text class="base-num">2</text>
             <text class="base-dept">{{ topSecond.college || '本校院系' }}</text>
@@ -105,11 +104,11 @@ onShow(() => {
         <!-- 冠军 1 -->
         <view v-if="topFirst" class="podium-col col-first">
           <view class="podium-avatar-box">
-            <text class="crown-icon gold">👑</text>
+            <app-icon name="crown" :size="42" color="#fbbf24" class="crown-badge" />
             <text class="avatar-letter">{{ topFirst.name ? topFirst.name.charAt(0) : '1' }}</text>
           </view>
           <view class="podium-name">{{ topFirst.name }}</view>
-          <view class="podium-pts gold-pts">{{ topFirst.totalPoints }} pts</view>
+          <view class="podium-pts gold-pts">{{ topFirst.totalPoints }} 积分</view>
           <view class="podium-base">
             <text class="base-num">1</text>
             <text class="base-dept">{{ topFirst.college || '本校院系' }}</text>
@@ -119,11 +118,10 @@ onShow(() => {
         <!-- 季军 3 -->
         <view v-if="topThird" class="podium-col col-third">
           <view class="podium-avatar-box">
-            <text class="crown-icon bronze">👑</text>
             <text class="avatar-letter">{{ topThird.name ? topThird.name.charAt(0) : '3' }}</text>
           </view>
           <view class="podium-name">{{ topThird.name }}</view>
-          <view class="podium-pts">{{ topThird.totalPoints }} pts</view>
+          <view class="podium-pts">{{ topThird.totalPoints }} 积分</view>
           <view class="podium-base">
             <text class="base-num">3</text>
             <text class="base-dept">{{ topThird.college || '本校院系' }}</text>
@@ -136,7 +134,7 @@ onShow(() => {
     <view class="rank-list-sheet">
       <view class="list-header-row">
         <text>名次 / 同学</text>
-        <text>累计总学分</text>
+        <text>累计总积分</text>
       </view>
 
       <view
@@ -159,7 +157,7 @@ onShow(() => {
           </view>
         </view>
         <view class="rank-points-val">
-          {{ item.totalPoints }} <text class="pts-unit-txt">pts</text>
+          {{ item.totalPoints }} <text class="pts-unit-txt">积分</text>
         </view>
       </view>
 
@@ -175,7 +173,7 @@ onShow(() => {
         <view class="sticky-left">
           <!-- 排名胶囊徽章 -->
           <view :class="['rank-pill', myRankInfo.rank === 1 ? 'pill-gold' : myRankInfo.rank === 2 ? 'pill-silver' : myRankInfo.rank === 3 ? 'pill-bronze' : 'pill-blue']">
-            <text v-if="myRankInfo.rank === 1" class="pill-crown">👑</text>
+            <app-icon v-if="myRankInfo.rank === 1" name="crown" :size="24" color="#ffffff" />
             第 {{ myRankInfo.rank > 0 ? myRankInfo.rank : '-' }} 名
           </view>
           <view class="sticky-text-col">
@@ -185,13 +183,15 @@ onShow(() => {
             </view>
             <view class="my-sub-txt">
               <template v-if="myRankInfo.rank === 1">
-                🎉 傲视群雄 · 稳居全校积分榜首！
+                <app-icon name="sparkles" :size="22" color="#38bdf8" />
+                <text>傲视群雄 · 稳居全校积分榜首！</text>
               </template>
               <template v-else-if="diffToPrev > 0 && prevName">
-                🔥 距上一名 {{ prevName }} 仅差 {{ diffToPrev }} pts
+                <app-icon name="flame" :size="22" color="#fb923c" />
+                <text>距上一名 {{ prevName }} 仅差 {{ diffToPrev }} 积分</text>
               </template>
               <template v-else>
-                积极参与校园打卡活动提升学分排名
+                <text>参与校园活动打卡，提升积分排名</text>
               </template>
             </view>
           </view>
@@ -200,7 +200,7 @@ onShow(() => {
         <view class="sticky-right">
           <view class="pts-box">
             <text class="my-pts-num">{{ myRankInfo.totalPoints }}</text>
-            <text class="my-pts-unit">pts</text>
+            <text class="my-pts-unit">积分</text>
           </view>
           <text class="detail-arrow">明细 ›</text>
         </view>
@@ -209,10 +209,10 @@ onShow(() => {
       <!-- 未登录引导状态 -->
       <template v-else>
         <view class="sticky-left unlogged-box">
-          <text class="unlogged-icon">🔒</text>
+          <app-icon name="lock" :size="40" color="#94a3b8" />
           <view class="sticky-text-col">
             <view class="my-name-txt">尚未登录学生身份</view>
-            <view class="my-sub-txt">点击前往认证登录，解锁查看全校学分位次</view>
+            <view class="my-sub-txt">点击前往认证登录，解锁查看全校积分位次</view>
           </view>
         </view>
         <view class="sticky-right">
@@ -290,19 +290,12 @@ onShow(() => {
   font-size: 38rpx;
 }
 
-.crown-icon {
+/* 冠军皇冠：仅第 1 名佩戴（皇冠是冠军专属符号，2/3 名由台阶高度与颜色区分） */
+.crown-badge {
   position: absolute;
-  top: -24rpx;
-  font-size: 28rpx;
-}
-
-.crown-icon.gold {
-  top: -30rpx;
-  font-size: 36rpx;
-}
-
-.crown-icon.bronze {
-  filter: sepia(0.8);
+  top: -38rpx;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .podium-name {
@@ -331,32 +324,40 @@ onShow(() => {
   width: 100%;
   background: rgba(255, 255, 255, 0.12);
   border-radius: 12rpx 12rpx 0 0;
-  padding: 16rpx 0;
   margin-top: 16rpx;
+  /* 收紧内边距，让 min-height 重新主导高度，保住 120/96/76 的台阶层次 */
+  padding: 10rpx 8rpx;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
+/*
+ * 用 min-height 而非固定 height：学院名折行时台阶可自动长高，
+ * 保证信息完整不被裁切；正常单行时高度与原设计一致（120/96/76 保持阶梯感）。
+ */
 .col-first .podium-base {
-  height: 120rpx;
+  min-height: 120rpx;
   background: rgba(251, 191, 36, 0.2);
   border: 1rpx solid rgba(251, 191, 36, 0.4);
   border-bottom: none;
 }
 
 .col-second .podium-base {
-  height: 96rpx;
+  min-height: 96rpx;
 }
 
 .col-third .podium-base {
-  height: 76rpx;
+  min-height: 76rpx;
 }
 
 .base-num {
   font-size: 32rpx;
   font-weight: 800;
   color: #ffffff;
+  line-height: 1;
 }
 
 .col-first .base-num {
@@ -364,14 +365,28 @@ onShow(() => {
   color: #fbbf24;
 }
 
+/*
+ * 学院名：占满整列宽度、居中、允许折行。
+ * 原先设了 max-width: 140rpx 导致「计算机科学与技术学院」被截成「计算机科学与」，
+ * 实际列宽约 225rpx 本就放得下，故去掉宽度限制，改为最多两行收口。
+ */
 .base-dept {
+  width: 100%;
+  margin-top: 3rpx;
   font-size: 18rpx;
   color: #94a3b8;
-  margin-top: 2rpx;
-  max-width: 140rpx;
+  text-align: center;
+  line-height: 1.25;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* 冠军台阶底色偏金，学院名同步提亮保证对比度 */
+.col-first .base-dept {
+  color: #fcd34d;
 }
 
 /* 列表容器 */
@@ -433,7 +448,7 @@ onShow(() => {
 }
 
 .avatar-me {
-  background: #409eff;
+  background: #2563eb;
   color: #ffffff;
 }
 
@@ -473,7 +488,7 @@ onShow(() => {
 
 .pts-unit-txt {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   font-weight: normal;
   margin-left: 4rpx;
 }
@@ -482,7 +497,7 @@ onShow(() => {
   text-align: center;
   padding: 40rpx 0;
   font-size: 22rpx;
-  color: #c0c4cc;
+  color: #cbd5e1;
 }
 
 /* =======================================================
@@ -525,9 +540,6 @@ onShow(() => {
   gap: 14rpx;
 }
 
-.unlogged-icon {
-  font-size: 36rpx;
-}
 
 .rank-pill {
   font-size: 22rpx;
@@ -562,10 +574,6 @@ onShow(() => {
   color: #ffffff;
 }
 
-.pill-crown {
-  font-size: 20rpx;
-}
-
 .sticky-text-col {
   display: flex;
   flex-direction: column;
@@ -597,9 +605,17 @@ onShow(() => {
 }
 
 .my-sub-txt {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
   font-size: 20rpx;
   color: #94a3b8;
   margin-top: 4rpx;
+  overflow: hidden;
+}
+
+/* 文案过长时省略号收尾，图标保持完整不被压缩 */
+.my-sub-txt text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

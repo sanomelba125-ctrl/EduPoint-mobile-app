@@ -1,7 +1,7 @@
 import { useUserStore } from '@/stores/user'
 
 // 跨端通用请求封装 (微信小程序 / H5 / App)
-const getBaseUrl = (): string => {
+export const getBaseUrl = (): string => {
   // #ifdef H5
   return '/api'
   // #endif

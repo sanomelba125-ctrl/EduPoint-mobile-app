@@ -7,6 +7,8 @@ import {
   type MyActivityItem
 } from '@/api/activity'
 import { getApiErrorMessage } from '@/utils/request'
+import { resolveImageUrl } from '@/utils/image'
+import { promptCancelSignupModal } from '@/utils/activityStatus'
 
 const currentTab = ref<number | undefined>(undefined) // undefined = 全部, 1 = 已报名, 2 = 已完成, 4 = 候补中, 3 = 已失效
 const loading = ref(false)
@@ -34,20 +36,16 @@ const handleTabChange = (val?: number) => {
   fetchRecords()
 }
 
-const handleCancelSignup = (actId: number, title: string) => {
-  uni.showModal({
-    title: '确认取消报名',
-    content: `确定取消「${title}」的报名吗？取消后名额将自动让渡给排队候补的同学。`,
-    confirmText: '确认取消',
-    confirmColor: '#f56c6c',
-    cancelText: '保留名额',
-    success: async (res) => {
-      if (!res.confirm) return
-      uni.showLoading({ title: '正在取消...', mask: true })
+const handleCancelSignup = (actId: number, title: string, isWaitlist: boolean) => {
+  promptCancelSignupModal({
+    title,
+    isWaitlist,
+    onConfirm: async () => {
+      uni.showLoading({ title: isWaitlist ? '正在退出候补...' : '正在取消...', mask: true })
       try {
         const message = await cancelSignupActivityApi(actId)
         uni.hideLoading()
-        uni.showToast({ title: message || '已取消报名', icon: 'success' })
+        uni.showToast({ title: message || (isWaitlist ? '已退出候补' : '已取消报名'), icon: 'success' })
         fetchRecords()
       } catch (err: any) {
         uni.hideLoading()
@@ -69,9 +67,9 @@ const goToDetail = (actId: number) => {
   })
 }
 
-const viewCert = () => {
+const viewCert = (activityId: number) => {
   uni.navigateTo({
-    url: '/pages/certificate/index'
+    url: `/pages/certificate/index?activityId=${activityId}`
   })
 }
 
@@ -141,7 +139,7 @@ onShow(() => {
           <view class="status-pill" :class="`status-${rec.status}`">
             <template v-if="rec.status === 1">已正式报名</template>
             <template v-else-if="rec.status === 2">已完成出勤</template>
-            <template v-else-if="rec.status === 4">候补排第{{ rec.queueNumber || 1 }}位</template>
+            <template v-else-if="rec.status === 4">{{ rec.queueNumber ? `候补排第${rec.queueNumber}位` : '候补排队中' }}</template>
             <template v-else>已取消/失效</template>
           </view>
         </view>
@@ -150,7 +148,7 @@ onShow(() => {
           <image
             v-if="rec.coverImage"
             class="cover-thumb"
-            :src="rec.coverImage"
+            :src="resolveImageUrl(rec.coverImage)"
             mode="aspectFill"
           />
           <view class="record-content">
@@ -160,7 +158,7 @@ onShow(() => {
               <svg class="row-svg" viewBox="0 0 24 24">
                 <path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/>
               </svg>
-              <text class="row-text">{{ rec.startTime }} 至 {{ rec.endTime }}</text>
+              <text class="row-text">{{ rec.startTime }}{{ rec.endTime ? ` 至 ${rec.endTime}` : ' 开始' }}</text>
             </view>
             <view class="record-row">
               <svg class="row-svg" viewBox="0 0 24 24">
@@ -174,13 +172,14 @@ onShow(() => {
         <!-- 打卡时间与获得积分 -->
         <view v-if="rec.status === 2 && rec.checkinTime" class="checkin-stamp-row">
           <text class="stamp-text">打卡时间：{{ rec.checkinTime }}</text>
-          <text class="stamp-pts">已入账 +{{ rec.pointsAwarded || rec.points }} pts</text>
+          <text class="stamp-pts">已入账 +{{ rec.pointsAwarded || rec.points }} 积分</text>
         </view>
 
         <!-- 底部快捷操作条 -->
         <view class="record-actions" @click.stop>
           <view class="action-left">
-            <text class="points-badge">+{{ rec.points }} pts</text>
+            <!-- 已完成/已取消的记录不再重复展示积分（打卡戳与退单说明已表达） -->
+            <text v-if="rec.status === 1 || rec.status === 4" class="points-badge">完成可得 +{{ rec.points }} 积分</text>
           </view>
 
           <view class="action-right">
@@ -188,7 +187,7 @@ onShow(() => {
             <template v-if="rec.status === 1">
               <button
                 class="act-btn btn-danger-outline"
-                @click="handleCancelSignup(rec.activityId, rec.title)"
+                @click="handleCancelSignup(rec.activityId, rec.title, false)"
               >
                 取消报名
               </button>
@@ -204,7 +203,7 @@ onShow(() => {
             <template v-else-if="rec.status === 4">
               <button
                 class="act-btn btn-warning-outline"
-                @click="handleCancelSignup(rec.activityId, rec.title)"
+                @click="handleCancelSignup(rec.activityId, rec.title, true)"
               >
                 退出候补
               </button>
@@ -214,7 +213,7 @@ onShow(() => {
             <template v-else-if="rec.status === 2 && rec.certificateEnabled">
               <button
                 class="act-btn btn-success-outline"
-                @click="viewCert(rec.title, rec.certificateTitle)"
+                @click="viewCert(rec.activityId)"
               >
                 查看荣誉证书
               </button>
@@ -224,13 +223,12 @@ onShow(() => {
       </view>
 
       <!-- 空状态 -->
-      <view v-if="!loading && recordList.length === 0" class="empty-state">
-        <svg class="empty-svg" viewBox="0 0 24 24">
-          <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-        </svg>
-        <text class="empty-title">暂无该分类的活动记录</text>
-        <text class="empty-sub">可前往活动广场选择感兴趣的讲座或志愿项目报名参加！</text>
-      </view>
+      <app-empty
+        v-if="!loading && recordList.length === 0"
+        icon="folder"
+        :title="currentTab ? '该分类下暂无活动记录' : '暂无活动记录'"
+        desc="去活动大厅看看正在报名的讲座与志愿项目"
+      />
     </view>
   </view>
 </template>
@@ -246,7 +244,7 @@ onShow(() => {
 .tab-segments {
   display: flex;
   background-color: #ffffff;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid #e2e8f0;
   padding: 0 16rpx;
   position: sticky;
   top: 0;
@@ -259,13 +257,13 @@ onShow(() => {
   height: 84rpx;
   line-height: 84rpx;
   font-size: 26rpx;
-  color: #606266;
+  color: #475569;
   position: relative;
   transition: all 0.2s;
 }
 
 .tab-item.active {
-  color: #409eff;
+  color: #2563eb;
   font-weight: 700;
 }
 
@@ -276,7 +274,7 @@ onShow(() => {
   left: 24%;
   right: 24%;
   height: 4rpx;
-  background-color: #409eff;
+  background-color: #2563eb;
   border-radius: 2rpx;
 }
 
@@ -291,7 +289,7 @@ onShow(() => {
 .record-card {
   background-color: #ffffff;
   border-radius: 16rpx;
-  border: 1px solid #ebeef5;
+  border: 1px solid #e2e8f0;
   padding: 24rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.02);
   transition: transform 0.15s ease;
@@ -314,8 +312,8 @@ onShow(() => {
 }
 
 .tag-category {
-  background-color: #ecf5ff;
-  color: #409eff;
+  background-color: #eff6ff;
+  color: #2563eb;
   font-size: 20rpx;
   padding: 2rpx 10rpx;
   border-radius: 4rpx;
@@ -323,8 +321,8 @@ onShow(() => {
 }
 
 .tag-cert {
-  background-color: #fdf6ec;
-  color: #e6a23c;
+  background-color: #fffbeb;
+  color: #f59e0b;
   font-size: 20rpx;
   padding: 2rpx 10rpx;
   border-radius: 4rpx;
@@ -339,26 +337,26 @@ onShow(() => {
 }
 
 .status-1 {
-  background-color: #ecf5ff;
-  color: #409eff;
+  background-color: #eff6ff;
+  color: #2563eb;
   border: 1px solid #d9ecff;
 }
 
 .status-2 {
-  background-color: #f0f9eb;
-  color: #67c23a;
+  background-color: #ecfdf5;
+  color: #10b981;
   border: 1px solid #c2e7b0;
 }
 
 .status-3 {
   background-color: #f4f4f5;
-  color: #909399;
+  color: #64748b;
   border: 1px solid #e9e9eb;
 }
 
 .status-4 {
-  background-color: #fdf6ec;
-  color: #e6a23c;
+  background-color: #fffbeb;
+  color: #f59e0b;
   border: 1px solid #faecd8;
 }
 
@@ -385,7 +383,7 @@ onShow(() => {
 .record-title {
   font-size: 29rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   margin-bottom: 14rpx;
   line-height: 1.4;
 }
@@ -395,14 +393,14 @@ onShow(() => {
   align-items: center;
   gap: 12rpx;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   margin-bottom: 8rpx;
 }
 
 .row-svg {
   width: 26rpx;
   height: 26rpx;
-  fill: #909399;
+  fill: #64748b;
   flex-shrink: 0;
 }
 
@@ -413,7 +411,7 @@ onShow(() => {
 .checkin-stamp-row {
   display: flex;
   justify-content: space-between;
-  background-color: #f0f9eb;
+  background-color: #ecfdf5;
   border: 1px solid #e1f3d8;
   border-radius: 8rpx;
   padding: 10rpx 16rpx;
@@ -427,7 +425,7 @@ onShow(() => {
 
 .stamp-pts {
   font-weight: 700;
-  color: #67c23a;
+  color: #10b981;
 }
 
 .record-actions {
@@ -442,7 +440,7 @@ onShow(() => {
 .points-badge {
   font-size: 28rpx;
   font-weight: 700;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .action-right {
@@ -466,52 +464,30 @@ onShow(() => {
 }
 
 .btn-primary {
-  background-color: #409eff;
+  background-color: #2563eb;
   color: #ffffff;
 }
 
 .btn-danger-outline {
   background-color: #ffffff;
   border: 1px solid #fbc4c4;
-  color: #f56c6c;
+  color: #ef4444;
 }
 
 .btn-warning-outline {
   background-color: #ffffff;
   border: 1px solid #faecd8;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .btn-success-outline {
-  background-color: #f0f9eb;
+  background-color: #ecfdf5;
   border: 1px solid #c2e7b0;
-  color: #67c23a;
+  color: #10b981;
 }
 
 /* 空状态 */
-.empty-state {
-  padding: 100rpx 32rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 14rpx;
-}
 
-.empty-svg {
-  width: 76rpx;
-  height: 76rpx;
-  fill: #c0c4cc;
-}
 
-.empty-title {
-  font-size: 28rpx;
-  color: #606266;
-  font-weight: 600;
-}
 
-.empty-sub {
-  font-size: 24rpx;
-  color: #909399;
-}
 </style>

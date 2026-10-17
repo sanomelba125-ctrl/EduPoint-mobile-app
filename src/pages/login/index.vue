@@ -19,6 +19,10 @@ const fillStudent = (no: string, pwd = '123456') => {
   password.value = pwd
 }
 
+const browseAsGuest = () => {
+  uni.switchTab({ url: '/pages/activity/index' })
+}
+
 // 登录提交
 const handleLogin = async () => {
   const no = studentNo.value.trim()
@@ -81,14 +85,14 @@ const handleLogin = async () => {
         </svg>
       </view>
       <text class="brand-title">EduPoint 学生端</text>
-      <text class="brand-sub">校园第二课堂活动与学分积分服务</text>
+      <text class="brand-sub">校园第二课堂活动积分服务</text>
     </view>
 
     <!-- 登录表单 -->
     <view class="login-form">
       <view class="input-field-wrap">
         <view class="field-icon">
-          <uni-icons type="person" size="18" color="#909399" />
+          <uni-icons type="person" size="18" color="#64748b" />
         </view>
         <input
           v-model="studentNo"
@@ -101,7 +105,7 @@ const handleLogin = async () => {
 
       <view class="input-field-wrap">
         <view class="field-icon">
-          <uni-icons type="locked" size="18" color="#909399" />
+          <uni-icons type="locked" size="18" color="#64748b" />
         </view>
         <input
           v-model="password"
@@ -125,10 +129,15 @@ const handleLogin = async () => {
 
     <!-- 业务学工须知卡片 -->
     <view class="auth-notice-card">
-      <text class="notice-title">学籍账号使用须知：\n</text>
+      <text class="notice-title">学籍账号使用须知</text>
       <text class="notice-body">
         本平台依托学校教务学工系统统一授权，不支持自主注册和线上密码找回。初始密码为证件后六位。如因代刷卡违规被系统冻结或遗忘密码，请携带学生证前往学院学工组核验处理。
       </text>
+    </view>
+
+    <!-- 游客出口：401 被 reLaunch 到本页时页面栈已清空，必须提供不登录的离开路径 -->
+    <view class="guest-exit-row" @click="browseAsGuest">
+      <text class="guest-exit-txt">先随便看看，暂不登录</text>
     </view>
 
     <!-- 快捷演示填充按钮 -->
@@ -136,10 +145,10 @@ const handleLogin = async () => {
       <view class="prefill-title">快捷体验（演示环境默认密码 123456）：</view>
       <view class="prefill-btns-row">
         <button class="prefill-btn active-gold" @click="fillStudent('2023010401')">
-          👑 榜首：张晓明 (420分)
+          演示账号：张晓明
         </button>
         <button class="prefill-btn" @click="fillStudent('20220101')">
-          🥈 榜眼：张伟 (320分)
+          演示账号：张伟
         </button>
       </view>
     </view>
@@ -148,8 +157,7 @@ const handleLogin = async () => {
 
 <style scoped>
 .login-wrapper {
-  padding: 40rpx 48rpx 60rpx;
-  display: flex;
+  padding: 40rpx 48rpx 60rpx;  display: flex;
   flex-direction: column;
   min-height: 100vh;
   background-color: #ffffff;
@@ -166,7 +174,7 @@ const handleLogin = async () => {
 .brand-logo-circle {
   width: 112rpx;
   height: 112rpx;
-  background-color: #409eff;
+  background-color: #2563eb;
   border-radius: 24rpx;
   margin-bottom: 28rpx;
   display: flex;
@@ -184,13 +192,13 @@ const handleLogin = async () => {
 .brand-title {
   font-size: 40rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   line-height: 1.3;
 }
 
 .brand-sub {
   font-size: 26rpx;
-  color: #909399;
+  color: #64748b;
   margin-top: 10rpx;
 }
 
@@ -218,17 +226,17 @@ const handleLogin = async () => {
   width: 100%;
   height: 88rpx;
   padding: 0 28rpx 0 76rpx;
-  border: 2rpx solid #dcdfe6;
+  border: 2rpx solid #e2e8f0;
   border-radius: 8rpx;
   font-size: 28rpx;
-  color: #303133;
-  background-color: #f5f7fa;
+  color: #1e293b;
+  background-color: #f8fafc;
   box-sizing: border-box;
   transition: border-color 0.2s;
 }
 
 .field-input:focus {
-  border-color: #409eff;
+  border-color: #2563eb;
   background-color: #ffffff;
 }
 
@@ -241,7 +249,7 @@ const handleLogin = async () => {
   width: 100%;
   height: 88rpx;
   line-height: 88rpx;
-  background-color: #409eff;
+  background-color: #2563eb;
   color: #ffffff;
   border: none;
   border-radius: 8rpx;
@@ -252,7 +260,7 @@ const handleLogin = async () => {
 }
 
 .submit-login-btn:active {
-  background-color: #337ecc;
+  background-color: #1d4ed8;
 }
 
 .auth-notice-card {
@@ -267,14 +275,25 @@ const handleLogin = async () => {
 .notice-title {
   font-size: 24rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   line-height: 1.6;
 }
 
 .notice-body {
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   line-height: 1.7;
+}
+
+.guest-exit-row {
+  margin-top: 28rpx;
+  display: flex;
+  justify-content: center;
+}
+.guest-exit-txt {
+  font-size: 26rpx;
+  color: #2563eb;
+  padding: 8rpx 24rpx;
 }
 
 .quick-prefill-wrap {
@@ -285,7 +304,7 @@ const handleLogin = async () => {
 
 .prefill-title {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-bottom: 16rpx;
 }
 
@@ -297,8 +316,8 @@ const handleLogin = async () => {
 
 .prefill-btn {
   background: #ffffff;
-  border: 2rpx solid #dcdfe6;
-  color: #606266;
+  border: 2rpx solid #e2e8f0;
+  color: #475569;
   font-size: 23rpx;
   height: 64rpx;
   line-height: 60rpx;
@@ -313,12 +332,12 @@ const handleLogin = async () => {
 .prefill-btn.active-gold {
   border-color: #f7ba2a;
   color: #b88230;
-  background-color: #fdf6ec;
+  background-color: #fffbeb;
 }
 
 .prefill-btn:active {
-  background-color: #f5f7fa;
-  color: #409eff;
+  background-color: #f8fafc;
+  color: #2563eb;
   border-color: #c6e2ff;
 }
 </style>

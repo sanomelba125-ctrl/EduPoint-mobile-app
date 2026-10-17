@@ -11,6 +11,7 @@ import {
   type GiftItem,
   type GiftExchangeResult
 } from '@/api/gift'
+import { resolveImageUrl } from '@/utils/image'
 
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
@@ -20,6 +21,7 @@ const loading = ref(false)
 const gift = ref<GiftItem | null>(null)
 const quantity = ref(1)
 const submitting = ref(false)
+const confirming = ref(false)
 
 /**
  * 服务端下发的防重兑换令牌 (P2-2 治理升级)：
@@ -111,7 +113,7 @@ const adjustQty = (delta: number) => {
 }
 
 const handleExchange = async () => {
-  if (!gift.value || submitting.value) return
+  if (!gift.value || submitting.value || confirming.value) return
   if (!canExchange.value) {
     if (gift.value.stock < quantity.value) {
       uni.showToast({ title: '库存不足', icon: 'none' })
@@ -134,11 +136,15 @@ const handleExchange = async () => {
     return
   }
 
+  confirming.value = true
   uni.showModal({
     title: '确认兑换礼品',
     content: `将消耗 ${totalCost.value} 积分兑换 ${quantity.value} 件「${gift.value.name}」，核销提货人：${finalName}（${finalPhone}），是否确认？`,
     confirmText: '立即兑换',
     cancelText: '再想想',
+    complete: () => {
+      confirming.value = false
+    },
     success: async (res) => {
       if (!res.confirm) return
       submitting.value = true
@@ -158,7 +164,8 @@ const handleExchange = async () => {
         fetchToken()
 
         // 核心亮点：全局更新 Pinia 中的用户可用积分
-        userStore.updatePoints(-totalCost.value)
+        // 余额以服务端回传权威值为准，避免本地推算与服务端实际扣减漂移
+        userStore.updatePoints(result.remainPoints - userStore.userInfo.currentPoints)
         if (gift.value) {
           gift.value.stock = Math.max(0, gift.value.stock - quantity.value)
         }
@@ -205,12 +212,12 @@ onLoad((query: any) => {
     <view class="hero-image-box">
       <image
         v-if="gift?.image"
-        :src="gift.image"
+        :src="resolveImageUrl(gift.image)"
         mode="aspectFit"
         class="hero-img"
       />
       <view v-else class="hero-placeholder">
-        <text class="placeholder-icon">🎁</text>
+        <app-icon name="gift" :size="64" color="#cbd5e1" stroke-width="1.6" />
       </view>
     </view>
 
@@ -220,14 +227,14 @@ onLoad((query: any) => {
       <view class="detail-card">
         <view class="points-row">
           <text class="unit-points">{{ gift.pointsCost }}</text>
-          <text class="unit-text">积分 / 件 (pts)</text>
+          <text class="unit-text">积分 / 件</text>
         </view>
         <view class="detail-title">{{ gift.name }}</view>
         <view class="meta-row">
           <text class="stock-info">
             库存剩余：<text class="stock-val">{{ gift.stock }}</text> 件
           </text>
-          <view class="tag-pill">线下自提 · 乐观锁防超卖</view>
+          <view class="tag-pill">线下自提 · 库存实时校验</view>
         </view>
         <view v-if="gift.description" class="gift-desc">
           {{ gift.description }}
@@ -238,7 +245,7 @@ onLoad((query: any) => {
       <view class="detail-card">
         <view class="stepper-row">
           <view>
-            <view class="stepper-title">兑换数量 (quantity)</view>
+            <view class="stepper-title">兑换数量</view>
             <view class="stepper-sub">每单限兑 5 件 · 扣减可用积分</view>
           </view>
           <view class="stepper-box">
@@ -263,7 +270,7 @@ onLoad((query: any) => {
       <view class="detail-card">
         <view class="section-header-row">
           <text class="notice-title">提货核验信息</text>
-          <text class="tag-auto">已匹配学籍档案</text>
+          <text v-if="receiverName && receiverPhone" class="tag-auto">已匹配学籍档案</text>
         </view>
         <view class="delivery-form">
           <view class="form-row">
@@ -354,7 +361,7 @@ onLoad((query: any) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1rpx solid #ebeef5;
+  border-bottom: 1rpx solid #e2e8f0;
 }
 
 .hero-img {
@@ -383,7 +390,7 @@ onLoad((query: any) => {
 .detail-card {
   background: #ffffff;
   border-radius: 16rpx;
-  border: 1rpx solid #ebeef5;
+  border: 1rpx solid #e2e8f0;
   padding: 28rpx 32rpx;
   box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.02);
 }
@@ -392,7 +399,7 @@ onLoad((query: any) => {
   display: flex;
   align-items: baseline;
   gap: 8rpx;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .unit-points {
@@ -403,13 +410,13 @@ onLoad((query: any) => {
 
 .unit-text {
   font-size: 24rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .detail-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
   margin: 16rpx 0 12rpx;
   line-height: 1.4;
 }
@@ -419,22 +426,22 @@ onLoad((query: any) => {
   justify-content: space-between;
   align-items: center;
   font-size: 24rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .stock-info {
-  color: #606266;
+  color: #475569;
 }
 
 .stock-val {
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .tag-pill {
   font-size: 22rpx;
-  color: #409eff;
-  background: #ecf5ff;
+  color: #2563eb;
+  background: #eff6ff;
   border-radius: 20rpx;
   padding: 4rpx 16rpx;
 }
@@ -444,7 +451,7 @@ onLoad((query: any) => {
   padding-top: 16rpx;
   border-top: 1rpx solid #f2f6fc;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   line-height: 1.5;
 }
 
@@ -457,19 +464,19 @@ onLoad((query: any) => {
 .stepper-title {
   font-size: 28rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .stepper-sub {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-top: 4rpx;
 }
 
 .stepper-box {
   display: inline-flex;
   align-items: center;
-  border: 1rpx solid #dcdfe6;
+  border: 1rpx solid #e2e8f0;
   border-radius: 8rpx;
   overflow: hidden;
   background: #ffffff;
@@ -479,11 +486,11 @@ onLoad((query: any) => {
   width: 64rpx;
   height: 64rpx;
   line-height: 60rpx;
-  background: #f5f7fa;
+  background: #f8fafc;
   border: none;
   font-size: 32rpx;
   font-weight: bold;
-  color: #606266;
+  color: #475569;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -492,7 +499,7 @@ onLoad((query: any) => {
 }
 
 .step-btn[disabled] {
-  color: #c0c4cc;
+  color: #cbd5e1;
 }
 
 .step-val {
@@ -500,7 +507,7 @@ onLoad((query: any) => {
   text-align: center;
   font-size: 28rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .balance-calc-bar {
@@ -509,7 +516,7 @@ onLoad((query: any) => {
   padding: 16rpx 24rpx;
   margin-top: 24rpx;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   display: flex;
   justify-content: space-between;
 }
@@ -519,17 +526,17 @@ onLoad((query: any) => {
 }
 
 .text-success {
-  color: #67c23a;
+  color: #10b981;
 }
 
 .text-danger {
-  color: #f56c6c;
+  color: #ef4444;
 }
 
 .notice-title {
   font-size: 28rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .section-header-row {
@@ -541,8 +548,8 @@ onLoad((query: any) => {
 
 .tag-auto {
   font-size: 20rpx;
-  color: #67c23a;
-  background-color: #f0f9eb;
+  color: #10b981;
+  background-color: #ecfdf5;
   padding: 4rpx 14rpx;
   border-radius: 20rpx;
 }
@@ -559,20 +566,20 @@ onLoad((query: any) => {
   background: #f8fafc;
   padding: 16rpx 20rpx;
   border-radius: 12rpx;
-  border: 1rpx solid #ebeef5;
+  border: 1rpx solid #e2e8f0;
 }
 
 .form-label {
   width: 160rpx;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   font-weight: 500;
 }
 
 .form-input {
   flex: 1;
   font-size: 26rpx;
-  color: #303133;
+  color: #1e293b;
 }
 
 .notice-list {
@@ -580,13 +587,13 @@ onLoad((query: any) => {
   flex-direction: column;
   gap: 12rpx;
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   line-height: 1.6;
 }
 
 .item-bold {
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .fixed-bottom-bar {
@@ -600,7 +607,7 @@ onLoad((query: any) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1rpx solid #ebeef5;
+  border-top: 1rpx solid #e2e8f0;
   z-index: 100;
 }
 
@@ -611,23 +618,23 @@ onLoad((query: any) => {
 
 .cost-label {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .cost-number {
   font-size: 36rpx;
   font-weight: 700;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .cost-unit {
   font-size: 24rpx;
   font-weight: normal;
-  color: #909399;
+  color: #64748b;
 }
 
 .exchange-submit-btn {
-  background-color: #409eff;
+  background-color: #2563eb;
   color: #ffffff;
   font-size: 28rpx;
   font-weight: 600;
@@ -639,7 +646,7 @@ onLoad((query: any) => {
 }
 
 .exchange-submit-btn[disabled] {
-  background-color: #c0c4cc;
+  background-color: #cbd5e1;
   color: #ffffff;
 }
 
@@ -668,8 +675,8 @@ onLoad((query: any) => {
   width: 88rpx;
   height: 88rpx;
   border-radius: 50%;
-  background: #f0f9eb;
-  color: #67c23a;
+  background: #ecfdf5;
+  color: #10b981;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -684,13 +691,13 @@ onLoad((query: any) => {
 .success-title {
   font-size: 34rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   margin-bottom: 8rpx;
 }
 
 .success-sub {
   font-size: 24rpx;
-  color: #909399;
+  color: #64748b;
   line-height: 1.4;
 }
 
@@ -699,8 +706,8 @@ onLoad((query: any) => {
   font-size: 48rpx;
   letter-spacing: 6rpx;
   font-weight: 700;
-  color: #409eff;
-  background: #ecf5ff;
+  color: #2563eb;
+  background: #eff6ff;
   border: 2rpx dashed #b3d8ff;
   border-radius: 8rpx;
   padding: 20rpx;
@@ -721,13 +728,13 @@ onLoad((query: any) => {
 }
 
 .modal-btn.outline {
-  background: #f5f7fa;
-  color: #606266;
-  border: 1rpx solid #dcdfe6;
+  background: #f8fafc;
+  color: #475569;
+  border: 1rpx solid #e2e8f0;
 }
 
 .modal-btn.primary {
-  background: #409eff;
+  background: #2563eb;
   color: #ffffff;
   border: none;
 }

@@ -4,6 +4,8 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores'
 import { storeToRefs } from 'pinia'
 import { getStudentProfileApi, updateStudentProfileApi, changeStudentPasswordApi, studentLogoutApi } from '@/api/auth'
+import { uploadImageApi } from '@/api/upload'
+import { resolveImageUrl } from '@/utils/image'
 import { getMyOrdersApi } from '@/api/gift'
 import { getUnreadNoticeCountApi } from '@/api/notice'
 
@@ -21,6 +23,9 @@ const savingProfile = ref(false)
 const formName = ref('')
 const formPhone = ref('')
 const formGender = ref(1)
+// 头像：表单中的待提交值 + 上传中状态
+const formAvatar = ref('')
+const uploadingAvatar = ref(false)
 
 // 首字头像徽章
 const avatarChar = computed(() => {
@@ -32,7 +37,12 @@ const avatarChar = computed(() => {
 
 // 刷新最新学生档案与待提货订单统计
 const refreshProfile = async () => {
-  if (!userStore.isLoggedIn) return
+  if (!userStore.isLoggedIn) {
+    // 退出登录后必须复位角标，否则红点会继续显示上一个账号的数字
+    pendingOrdersCount.value = 0
+    unreadNoticeCount.value = 0
+    return
+  }
   try {
     const profile = await getStudentProfileApi()
     if (profile) {
@@ -79,11 +89,48 @@ const openEditModal = () => {
   formName.value = userInfo.value.name || ''
   formPhone.value = userInfo.value.phone || ''
   formGender.value = userInfo.value.gender ?? 1
+  formAvatar.value = userInfo.value.avatar || ''
   showEditModal.value = true
 }
 
 const closeEditModal = () => {
   showEditModal.value = false
+}
+
+// 选择本地图片并上传至对象存储，成功后仅更新表单待提交值（点“保存修改”才落库）
+const handleChooseAvatar = () => {
+  if (uploadingAvatar.value) return
+
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: async (res: any) => {
+      const filePath: string = res.tempFilePaths?.[0]
+      const file = res.tempFiles?.[0]
+      const size: number | undefined = file?.size
+      // H5 端 tempFilePaths 是 blob: 地址（无扩展名），必须用 tempFiles[0].name 判断格式
+      const fileName: string | undefined = file?.name
+      if (!filePath) return
+
+      uploadingAvatar.value = true
+      uni.showLoading({ title: '上传中...', mask: true })
+      try {
+        const url = await uploadImageApi(filePath, size, fileName)
+        uni.hideLoading()
+        formAvatar.value = url
+        uni.showToast({ title: '头像上传成功', icon: 'success' })
+      } catch (err: any) {
+        uni.hideLoading()
+        uni.showToast({ title: err?.message || '头像上传失败', icon: 'none' })
+      } finally {
+        uploadingAvatar.value = false
+      }
+    },
+    fail: () => {
+      // 用户主动取消选择，无需提示
+    }
+  })
 }
 
 // 提交个人资料修改
@@ -109,13 +156,15 @@ const handleSaveProfile = async () => {
     const updated = await updateStudentProfileApi({
       name: nameTrimmed,
       phone: phoneTrimmed,
-      gender: formGender.value
+      gender: formGender.value,
+      avatar: formAvatar.value
     })
     // 同步更新全局 Pinia 与 Storage
     userStore.setUserInfo({
       name: updated.name || nameTrimmed,
       phone: updated.phone || phoneTrimmed,
-      gender: updated.gender ?? formGender.value
+      gender: updated.gender ?? formGender.value,
+      avatar: updated.avatar || formAvatar.value
     })
     uni.showToast({ title: '个人资料保存成功', icon: 'success' })
     showEditModal.value = false
@@ -134,6 +183,13 @@ const newPassword = ref('')
 const confirmPassword = ref('')
 
 const openPasswordModal = () => {
+  if (!userStore.isLoggedIn) {
+    uni.showToast({ title: '请先登录后再修改密码', icon: 'none' })
+    setTimeout(() => {
+      uni.navigateTo({ url: '/pages/login/index' })
+    }, 700)
+    return
+  }
   oldPassword.value = ''
   newPassword.value = ''
   confirmPassword.value = ''
@@ -204,6 +260,8 @@ const handleLogout = () => {
       if (res.confirm) {
         studentLogoutApi().catch(() => {})
         userStore.logout()
+        pendingOrdersCount.value = 0
+        unreadNoticeCount.value = 0
         uni.showToast({ title: '已退出登录', icon: 'none' })
         setTimeout(() => {
           uni.navigateTo({ url: '/pages/login/index' })
@@ -214,7 +272,31 @@ const handleLogout = () => {
 }
 
 // 页面导航安全封装
+/**
+ * 未登录也能自由进入的页面：
+ * - 积分商城 / 礼品详情：游客可浏览商品（礼品域免登录）
+ * - 排行榜：公开榜单，用于激励非登录用户
+ * - 活动大厅：tabBar 首页
+ * - 登录页：否则会形成"点入口→跳登录→又被拦"的死循环
+ * 其余入口（我的活动、兑换订单、积分流水、通知、证书…）均为个人数据，未登录一律引导登录。
+ */
+const GUEST_ALLOWED = [
+  '/pages/login/index',
+  '/pages/activity/index',
+  '/pages/gift/index',
+  '/pages/gift/detail',
+  '/pages/rank/index'
+]
+
 const navTo = (url: string) => {
+  if (!userStore.isLoggedIn) {
+    const allowed = GUEST_ALLOWED.some((p) => url === p || url.startsWith(`${p}?`))
+    if (!allowed) {
+      uni.showToast({ title: '请先登录后再查看', icon: 'none' })
+      setTimeout(() => uni.navigateTo({ url: '/pages/login/index' }), 700)
+      return
+    }
+  }
   if (['/pages/activity/index', '/pages/gift/index', '/pages/rank/index', '/pages/my/index'].includes(url)) {
     uni.switchTab({ url })
   } else {
@@ -233,9 +315,11 @@ const navTo = (url: string) => {
           <image
             v-if="userInfo.avatar"
             class="avatar-img"
-            :src="userInfo.avatar"
+            :src="resolveImageUrl(userInfo.avatar)"
             mode="aspectFill"
           />
+          <!-- 游客态用线性人像图标，避免与已登录用户的首字徽章混淆 -->
+          <app-icon v-else-if="!userStore.isLoggedIn" name="graduate" :size="52" color="#1e3a8a" />
           <view v-else class="profile-avatar-letter">
             {{ avatarChar }}
           </view>
@@ -244,11 +328,11 @@ const navTo = (url: string) => {
         <!-- 学籍信息区 -->
         <view class="user-meta-box">
           <view class="name-line">
-            <text class="user-name">{{ userInfo.name || '点击登录 / 认证学籍' }}</text>
+            <text class="user-name">{{ userStore.isLoggedIn ? userInfo.name : '点击登录 / 认证学籍' }}</text>
             <text v-if="userStore.isLoggedIn" class="badge-certified">学籍已认证</text>
           </view>
           <view class="user-sub-line">
-            {{ userInfo.studentNo ? `学号：${userInfo.studentNo}` : '登录后查看学籍与学分' }}
+            {{ userInfo.studentNo ? `学号：${userInfo.studentNo}` : '登录后查看学籍与积分' }}
             <text v-if="userInfo.college"> · {{ userInfo.college }}</text>
           </view>
           <view v-if="userInfo.className || userInfo.major" class="user-class-line">
@@ -263,37 +347,41 @@ const navTo = (url: string) => {
       </view>
     </view>
 
-    <!-- 双积分浮动卡片 -->
-    <view class="dual-points-card">
+    <!-- 双积分浮动卡片（未登录时改为登录引导，避免展示无意义的 0 值误导用户） -->
+    <view class="dual-points-card" v-if="userStore.isLoggedIn">
       <view class="point-box cur" @click="navTo('/pages/my/points')">
-        <text class="point-box-title">可用积分 (current)</text>
+        <text class="point-box-title">可用积分</text>
         <text class="point-box-val">{{ userInfo.currentPoints }}</text>
         <text class="point-box-sub">用于礼品兑换抵扣 &gt;</text>
       </view>
 
       <view class="point-box tot" @click="navTo('/pages/rank/index')">
-        <text class="point-box-title">累计总学分 (total)</text>
+        <text class="point-box-title">累计总积分</text>
         <text class="point-box-val">{{ userInfo.totalPoints }}</text>
-        <text class="point-box-sub">全校学分光荣榜 &gt;</text>
+        <text class="point-box-sub">全校积分光荣榜 &gt;</text>
       </view>
+    </view>
+
+    <view class="login-guide-card" v-else @click="navTo('/pages/login/index')">
+      <view class="lg-main">
+        <text class="lg-title">登录后查看积分与排名</text>
+        <text class="lg-sub">使用学号与统一认证密码登录</text>
+      </view>
+      <text class="lg-action">立即登录 &gt;</text>
     </view>
 
     <!-- 四宫格入口金刚区 -->
     <view class="grid-action-menu">
       <view class="grid-slot" @click="navTo('/pages/activity/records')">
         <view class="grid-icon-round icon-activity">
-          <svg class="grid-svg" viewBox="0 0 24 24">
-            <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-          </svg>
+          <app-icon name="calendar" :size="44" />
         </view>
         <text class="slot-text">我的活动</text>
       </view>
 
       <view class="grid-slot" @click="navTo('/pages/my/orders')">
         <view class="grid-icon-round icon-orders">
-          <svg class="grid-svg" viewBox="0 0 24 24">
-            <path d="M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M19,5V19H5V5H19M7,7V9H17V7H7M7,11V13H17V11H7M7,15V17H14V15H7Z"/>
-          </svg>
+          <app-icon name="package" :size="44" />
           <view v-if="pendingOrdersCount > 0" class="badge-dot">{{ pendingOrdersCount }}</view>
         </view>
         <text class="slot-text">兑换订单</text>
@@ -301,18 +389,14 @@ const navTo = (url: string) => {
 
       <view class="grid-slot" @click="navTo('/pages/my/points')">
         <view class="grid-icon-round icon-points">
-          <svg class="grid-svg" viewBox="0 0 24 24">
-            <path d="M21,18V19A2,2 0 0,1 19,21H5C3.89,21 3,20.1 3,19V5A2,2 0 0,1 5,3H19A2,2 0 0,1 21,5V6H12C10.89,6 10,6.9 10,8V16C10,17.1 10.89,18 12,18H21M12,16H22V8H12V16M16,13.5A1.5,1.5 0 0,1 14.5,12A1.5,1.5 0 0,1 16,10.5A1.5,1.5 0 0,1 17.5,12A1.5,1.5 0 0,1 16,13.5Z"/>
-          </svg>
+          <app-icon name="coins" :size="44" />
         </view>
-        <text class="slot-text">学分流水</text>
+        <text class="slot-text">积分流水</text>
       </view>
 
       <view class="grid-slot" @click="openEditModal">
         <view class="grid-icon-round icon-profile">
-          <svg class="grid-svg" viewBox="0 0 24 24">
-            <path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"/>
-          </svg>
+          <app-icon name="user" :size="44" />
         </view>
         <text class="slot-text">资料设置</text>
       </view>
@@ -322,9 +406,7 @@ const navTo = (url: string) => {
     <view class="cell-menu-list">
       <view class="cell-menu-item" @click="openEditModal">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21A2,2 0 0,0 7,23H17A2,2 0 0,0 19,21V3C19,1.89 18.1,1 17,1Z"/>
-          </svg>
+          <app-icon name="file-text" :size="38" />
           <text class="cell-title">学籍档案与联系电话</text>
         </view>
         <view class="cell-right-part">
@@ -335,9 +417,7 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/my/orders')">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M22 10V6C22 4.89 21.1 4 20 4H4C2.9 4 2 4.89 2 6V10C3.11 10 4 10.9 4 12S3.11 14 2 14V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V14C20.9 14 20 13.1 20 12S20.9 10 22 10M20 8.54C18.81 9.23 18 10.53 18 12S18.81 14.77 20 15.46V18H4V15.46C5.19 14.77 6 13.47 6 12S5.19 9.23 4 8.54V6H20V8.54Z"/>
-          </svg>
+          <app-icon name="qrcode" :size="38" />
           <text class="cell-title">现场提货核销凭证</text>
         </view>
         <view class="cell-right-part">
@@ -348,9 +428,7 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/notice/index')">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M12 22C13.1 22 14 21.1 14 20H10C10 21.1 10.9 22 12 22M18 16V11C18 7.93 16.37 5.36 13.5 4.68V4C13.5 3.17 12.83 2.5 12 2.5C11.17 2.5 10.5 3.17 10.5 4V4.68C7.64 5.36 6 7.92 6 11V16L4 18V19H20V18L18 16Z"/>
-          </svg>
+          <app-icon name="bell" :size="38" />
           <text class="cell-title">消息通知中心</text>
         </view>
         <view class="cell-right-part">
@@ -361,9 +439,7 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/certificate/index')">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M13,21L15,20.25L17,21V14H13V21M17,10.5V7L14,4L11,7V10.5C11.83,10.82 12.5,11.5 12.82,12.33C13.5,12.11 14.22,12 15,12C15.78,12 16.5,12.11 17.18,12.33C17.5,11.5 18.17,10.82 19,10.5V7L16,4L13,7V10.5C13.83,10.82 14.5,11.5 14.82,12.33C15.5,12.11 16.22,12 17,12M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/>
-          </svg>
+          <app-icon name="certificate" :size="38" />
           <text class="cell-title">我的电子荣誉证书</text>
         </view>
         <view class="cell-right-part">
@@ -373,10 +449,8 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/rank/index')">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24">
-            <path d="M19 5H18V3H6V5H5C3.9 5 3 5.9 3 7V8C3 10.55 4.92 12.63 7.39 12.93C8.15 14.25 9.47 15.19 11 15.46V18H8V20H16V18H13V15.46C14.53 15.19 15.85 14.25 16.61 12.93C19.08 12.63 21 10.55 21 8V7C21 5.9 20.1 5 19 5M5 8V7H6V10.7C5.38 10.21 5 9.46 5 8M19 8C19 9.46 18.62 10.21 18 10.7V7H19V8Z"/>
-          </svg>
-          <text class="cell-title">全校学分荣誉排行榜</text>
+          <app-icon name="trophy" :size="38" />
+          <text class="cell-title">全校积分荣誉排行榜</text>
         </view>
         <view class="cell-right-part">
           <text class="cell-sub-text">查看排名 &gt;</text>
@@ -385,9 +459,7 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="navTo('/pages/ai-chat/index')">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24" style="fill: #2563eb;">
-            <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6M12,12C9.33,12 4,13.34 4,16V18H20V16C20,13.34 14.67,12 12,12Z"/>
-          </svg>
+          <app-icon name="bot" :size="38" />
           <text class="cell-title">AI 智能客服小智</text>
         </view>
         <view class="cell-right-part">
@@ -397,9 +469,7 @@ const navTo = (url: string) => {
 
       <view class="cell-menu-item" @click="openPasswordModal">
         <view class="cell-left-part">
-          <svg class="cell-svg" viewBox="0 0 24 24" style="fill: #f59e0b;">
-            <path d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.89,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/>
-          </svg>
+          <app-icon name="lock" :size="38" />
           <text class="cell-title">修改登录密码</text>
         </view>
         <view class="cell-right-part">
@@ -435,6 +505,33 @@ const navTo = (url: string) => {
           </view>
 
           <!-- 可编辑信息 -->
+          <!-- 头像上传 -->
+          <view class="form-item">
+            <text class="form-label">个人头像</text>
+            <view class="avatar-upload-row">
+              <view class="avatar-preview" @click="handleChooseAvatar">
+                <image
+                  v-if="formAvatar"
+                  class="avatar-preview-img"
+                  :src="resolveImageUrl(formAvatar)"
+                  mode="aspectFill"
+                />
+                <text v-else class="avatar-preview-letter">{{ avatarChar }}</text>
+              </view>
+              <view class="avatar-upload-meta">
+                <view
+                  class="avatar-upload-btn"
+                  :class="{ 'is-busy': uploadingAvatar }"
+                  @click="handleChooseAvatar"
+                >
+                  <app-icon name="camera" :size="28" />
+                  <text>{{ uploadingAvatar ? '上传中...' : formAvatar ? '更换照片' : '选择照片' }}</text>
+                </view>
+                <text class="avatar-upload-tip">支持 jpg / png / webp，单张不超过 5MB</text>
+              </view>
+            </view>
+          </view>
+
           <view class="form-item">
             <text class="form-label">姓名 / 昵称 <text class="required">*</text></text>
             <input
@@ -463,13 +560,13 @@ const navTo = (url: string) => {
                 :class="['radio-pill', formGender === 1 ? 'active' : '']"
                 @click="formGender = 1"
               >
-                👨 男生
+                男生
               </view>
               <view
                 :class="['radio-pill', formGender === 2 ? 'active' : '']"
                 @click="formGender = 2"
               >
-                👩 女生
+                女生
               </view>
             </view>
           </view>
@@ -647,6 +744,47 @@ const navTo = (url: string) => {
 }
 
 /* 双积分对比大卡片 */
+/* 未登录引导卡：占据积分卡同样的上浮位置，避免未登录时露出两个 0 值 */
+.login-guide-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -40rpx 32rpx 24rpx 32rpx;
+  padding: 30rpx 28rpx;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-radius: 16rpx;
+  box-shadow: 0 8rpx 24rpx rgba(37, 99, 235, 0.22);
+  position: relative;
+  z-index: 10;
+}
+
+.lg-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.lg-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.lg-sub {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.lg-action {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 10rpx 22rpx;
+  border-radius: 22rpx;
+}
+
 .dual-points-card {
   margin: -40rpx 32rpx 24rpx 32rpx;
   background: #ffffff;
@@ -777,34 +915,25 @@ const navTo = (url: string) => {
   font-size: 40rpx;
 }
 
-.grid-svg {
-  width: 44rpx;
-  height: 44rpx;
+
+
+.icon-activity {
+  color: #2563eb;
 }
 
-.icon-activity .grid-svg {
-  fill: #2563eb;
+.icon-orders {
+  color: #d97706;
 }
 
-.icon-orders .grid-svg {
-  fill: #d97706;
+.icon-points {
+  color: #7e22ce;
 }
 
-.icon-points .grid-svg {
-  fill: #7e22ce;
+.icon-profile {
+  color: #059669;
 }
 
-.icon-profile .grid-svg {
-  fill: #059669;
-}
 
-.cell-svg {
-  width: 38rpx;
-  height: 38rpx;
-  fill: #64748b;
-  flex-shrink: 0;
-  margin-right: 12rpx;
-}
 
 .slot-text {
   font-size: 24rpx;
@@ -835,6 +964,8 @@ const navTo = (url: string) => {
 }
 
 .cell-left-part {
+  /* app-icon 用 currentColor，这里统一列表项图标的灰 */
+  color: #64748b;
   display: flex;
   align-items: center;
   gap: 16rpx;
@@ -959,6 +1090,69 @@ const navTo = (url: string) => {
   padding: 16rpx;
   border-radius: 10rpx;
   border: 1rpx dashed #cbd5e1;
+}
+
+/* 头像上传区 */
+.avatar-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.avatar-preview {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 60rpx;
+  background: #eff6ff;
+  border: 2rpx solid #dbeafe;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar-preview-img {
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-preview-letter {
+  font-size: 44rpx;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.avatar-upload-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  flex: 1;
+}
+
+.avatar-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  align-self: flex-start;
+  padding: 12rpx 24rpx;
+  border-radius: 40rpx;
+  background: #eff6ff;
+  border: 2rpx solid #bfdbfe;
+  color: #2563eb;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.avatar-upload-btn.is-busy {
+  opacity: 0.6;
+}
+
+.avatar-upload-tip {
+  font-size: 20rpx;
+  color: #94a3b8;
+  line-height: 1.5;
 }
 
 .form-label {

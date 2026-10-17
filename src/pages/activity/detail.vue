@@ -140,7 +140,7 @@ const estimatedDuration = computed(() => {
   if (distanceToActivity.value === null) return '计算中'
   const routeDist = distanceToActivity.value * 1.25
   const mins = Math.max(1, Math.round(routeDist / 75))
-  return mins > 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分钟` : `约 ${mins} 分钟`
+  return mins > 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分钟` : `${mins} 分钟`
 })
 
 /**
@@ -378,7 +378,7 @@ const drawNavigationRoute = async () => {
     clearRouteLayers()
     const distStr = distMeters < 1000 ? `${distMeters}米` : `${(distMeters / 1000).toFixed(1)}公里`
     const mins = Math.max(1, Math.round(distMeters / 600))
-    const durStr = mins > 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分钟` : `约 ${mins} 分钟`
+    const durStr = mins > 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分钟` : `${mins} 分钟`
 
     directLineInstance = new AMap.Polyline({
       path: [startPos, endPos],
@@ -396,7 +396,7 @@ const drawNavigationRoute = async () => {
       distance: distStr,
       duration: durStr,
       mode: 'direct',
-      modeName: '直线导航'
+      modeName: '直线'
     }
     try {
       mapInstance.setFitView([myMarkerInstance, endMarkerInstance, directLineInstance].filter(Boolean), false, [60, 60, 60, 60])
@@ -429,7 +429,7 @@ const drawNavigationRoute = async () => {
             const durationSec = route.time || 0
             const distStr = dMeters < 1000 ? `${dMeters}米` : `${(dMeters / 1000).toFixed(1)}公里`
             const durationMin = Math.max(1, Math.round(durationSec / 60))
-            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `约 ${durationMin} 分钟`
+            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `${durationMin} 分钟`
 
             navRouteInfo.value = {
               distance: distStr,
@@ -476,7 +476,7 @@ const drawNavigationRoute = async () => {
             const durationSec = route.time || 0
             const distStr = dMeters < 1000 ? `${dMeters}米` : `${(dMeters / 1000).toFixed(1)}公里`
             const durationMin = Math.max(1, Math.round(durationSec / 60))
-            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `约 ${durationMin} 分钟`
+            const durStr = durationMin > 60 ? `${Math.floor(durationMin / 60)}小时${durationMin % 60}分钟` : `${durationMin} 分钟`
 
             navRouteInfo.value = {
               distance: distStr,
@@ -788,9 +788,9 @@ onShow(() => {
   if (isNavigating.value) {
     startLocationTracking()
   }
-  // 页面重新展示时，若尚未拉取过活动数据则加载，避免高频轮询引起持续刷新
-  if (!activity.value && activityId.value) {
-    fetchDetail()
+  // 页面重新展示时静默刷新：从打卡页返回后报名/打卡状态必须同步，不能继续显示旧状态
+  if (activityId.value) {
+    fetchDetail(true)
   }
 })
 
@@ -816,7 +816,7 @@ onUnmounted(() => {
       <!-- 头部 Hero (深蓝旗舰渐变) -->
       <view class="detail-hero-box">
         <view class="hero-tag-row">
-          <text class="hero-tag tag-primary">{{ activity.categoryName || '学术科技' }}</text>
+          <text v-if="activity.categoryName" class="hero-tag tag-primary">{{ activity.categoryName }}</text>
           <text class="hero-tag" :class="`tag-status-${statusInfo.statusType}`">
             {{ statusInfo.statusLabel }}
           </text>
@@ -829,8 +829,9 @@ onUnmounted(() => {
           </view>
         </view>
         <view class="hero-title">{{ activity.title }}</view>
-        <view class="hero-organizer">
-          主办单位：{{ activity.certificateIssuer || '学生工作处 / 校团委' }}
+        <!-- 后端无主办单位字段，certificateIssuer 是证书签发方，不得冒充主办单位 -->
+        <view v-if="activity.certificateIssuer" class="hero-organizer">
+          证书签发单位：{{ activity.certificateIssuer }}
         </view>
       </view>
 
@@ -843,22 +844,30 @@ onUnmounted(() => {
               <view class="meta-label">完成出勤奖励积分</view>
               <view class="meta-points-val">
                 +{{ activity.points }}
-                <text class="pts-unit">pts</text>
+                <text class="pts-unit">积分</text>
               </view>
             </view>
             <view class="quota-points-right">
               <view class="meta-label">正选名额状态</view>
               <view class="quota-number-line">
-                {{ enrolledCount }} / {{ activity.registrationLimit }}
-                <text v-if="isFull && activity.waitlistEnabled" class="badge-waitlist">可候补</text>
-                <text v-else-if="!isFull" class="badge-available">名额充裕</text>
-                <text v-else class="badge-full">已满额</text>
+                <!-- registrationLimit <= 0 表示不限名额，不能显示成 "12 / 0" -->
+                <template v-if="activity.registrationLimit > 0">
+                  {{ enrolledCount }} / {{ activity.registrationLimit }}
+                  <text v-if="isFull && activity.waitlistEnabled" class="badge-waitlist">可候补</text>
+                  <text v-else-if="isFull" class="badge-full">已满额</text>
+                  <text v-else-if="activity.registrationLimit - enrolledCount <= 5" class="badge-available">仅剩 {{ activity.registrationLimit - enrolledCount }} 个名额</text>
+                  <text v-else class="badge-available">名额充裕</text>
+                </template>
+                <template v-else>
+                  已报 {{ enrolledCount }}
+                  <text class="badge-available">不限名额</text>
+                </template>
               </view>
             </view>
           </view>
 
           <!-- 直观报名进度条 -->
-          <view class="detail-progress-wrap">
+          <view v-if="activity.registrationLimit > 0" class="detail-progress-wrap">
             <view class="detail-progress-track">
               <view
                 class="detail-progress-fill"
@@ -869,6 +878,11 @@ onUnmounted(() => {
             <view class="detail-progress-info">
               <text class="progress-sub">已报 {{ enrolledCount }} / 额定 {{ activity.registrationLimit }} 人</text>
               <text class="progress-percent" :class="{ 'full-text': isFull }">{{ progressPercent }}%</text>
+            </view>
+          </view>
+          <view v-else class="detail-progress-wrap">
+            <view class="detail-progress-info">
+              <text class="progress-sub">本活动不限参与人数，报名即可参与</text>
             </view>
           </view>
         </view>
@@ -891,7 +905,7 @@ onUnmounted(() => {
             </svg>
             <view class="tip-text-box">
               <view class="tip-strong">
-                正在候补排队中（当前排第 {{ activity.myQueueNumber || 1 }} 位）
+                {{ activity.myQueueNumber ? `正在候补排队中（当前排第 ${activity.myQueueNumber} 位）` : '正在候补排队中（排位同步中）' }}
               </view>
               <view class="tip-desc">正选同学退报后，系统将自动顺延递补并提醒。</view>
             </view>
@@ -902,7 +916,7 @@ onUnmounted(() => {
             </svg>
             <view class="tip-text-box">
               <view class="tip-strong">已完成本次活动打卡！</view>
-              <view class="tip-desc">+{{ activity.points }} 积分已即时入账至可用学分余额。</view>
+              <view class="tip-desc">+{{ activity.points }} 积分已即时入账至可用积分余额。</view>
             </view>
           </view>
         </view>
@@ -968,7 +982,7 @@ onUnmounted(() => {
                     已进入打卡核验范围 (距打卡点约 {{ formattedDistance }})
                   </view>
                   <view v-else class="dist-status-main blue-text">
-                    距活动打卡点约 {{ formattedDistance }} · 步行 {{ estimatedDuration }}
+                    距活动打卡点约 {{ formattedDistance }} · 步行约 {{ estimatedDuration }}
                   </view>
                 </template>
                 <view class="dist-status-sub">
@@ -1034,7 +1048,7 @@ onUnmounted(() => {
             <view v-if="navRouteInfo" class="nav-guidance-card">
               <view class="nav-guide-top">
                 <view class="nav-guide-target">
-                  <text class="guide-target-icon">🏁</text>
+                  <app-icon name="map-pin" :size="30" color="#2563eb" />
                   <text class="guide-target-name">{{ activity.locationName || '活动打卡点' }}</text>
                 </view>
                 <view class="nav-guide-stats">
@@ -1062,9 +1076,6 @@ onUnmounted(() => {
               <svg class="marker-svg" viewBox="0 0 24 24">
                 <path d="M12,2C15.31,2 18,4.69 18,8C18,12.5 12,22 12,22C12,22 6,12.5 6,8C6,4.69 8.69,2 12,2M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6Z"/>
               </svg>
-            </view>
-            <view class="radar-coords-tag">
-              基准点: {{ activity.longitude }}, {{ activity.latitude }}
             </view>
             <!-- 雷达卡片底部导航快捷入口 -->
             <view class="radar-quick-nav-bar" @click="toggleNavigation">
@@ -1094,7 +1105,7 @@ onUnmounted(() => {
               出勤考勤须知
             </view>
             <view class="notice-content">
-              {{ activity.ruleDescription || '现场大屏将展示动态防盗刷二维码（每10秒自动轮换），学生到达现场在 500 米定位范围内扫码即可完成出勤核验。' }}
+              {{ activity.ruleDescription || (activity.locationCheckEnabled ? `现场大屏将展示动态防盗刷二维码（每10秒自动轮换），学生到达现场在 ${activity.locationRadius} 米定位范围内扫码即可完成出勤核验。` : '现场大屏将展示动态防盗刷二维码（每10秒自动轮换），学生到达现场扫码即可完成出勤核验。') }}
             </view>
           </view>
         </view>
@@ -1132,7 +1143,7 @@ onUnmounted(() => {
 
     <!-- 活动未找到/加载失败提示 -->
     <view v-else class="detail-state-card">
-      <text class="detail-state-icon">📋</text>
+      <app-icon name="alert-circle" :size="88" color="#94a3b8" stroke-width="1.5" />
       <text class="detail-state-text">未找到该活动信息或活动已下线</text>
       <button class="detail-retry-btn" @click="fetchDetail(false)">重新加载</button>
     </view>
@@ -1218,7 +1229,7 @@ onUnmounted(() => {
 }
 
 .tag-warning {
-  background-color: #e6a23c;
+  background-color: #f59e0b;
   color: #ffffff;
 }
 
@@ -1277,7 +1288,7 @@ onUnmounted(() => {
 .uni-card {
   background-color: #ffffff;
   border-radius: 16rpx;
-  border: 1px solid #ebeef5;
+  border: 1px solid #e2e8f0;
   padding: 24rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.02);
 }
@@ -1296,21 +1307,21 @@ onUnmounted(() => {
 
 .meta-label {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-bottom: 4rpx;
 }
 
 .meta-points-val {
   font-size: 44rpx;
   font-weight: 700;
-  color: #e6a23c;
+  color: #f59e0b;
   line-height: 1;
 }
 
 .pts-unit {
   font-size: 24rpx;
   font-weight: normal;
-  color: #909399;
+  color: #64748b;
   margin-left: 6rpx;
 }
 
@@ -1321,7 +1332,7 @@ onUnmounted(() => {
 .quota-number-line {
   font-size: 26rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
   display: flex;
   align-items: center;
   gap: 8rpx;
@@ -1329,8 +1340,8 @@ onUnmounted(() => {
 }
 
 .badge-available {
-  background-color: #f0f9eb;
-  color: #67c23a;
+  background-color: #ecfdf5;
+  color: #10b981;
   font-size: 20rpx;
   padding: 2rpx 10rpx;
   border-radius: 4rpx;
@@ -1338,8 +1349,8 @@ onUnmounted(() => {
 }
 
 .badge-waitlist {
-  background-color: #fdf6ec;
-  color: #e6a23c;
+  background-color: #fffbeb;
+  color: #f59e0b;
   font-size: 20rpx;
   padding: 2rpx 10rpx;
   border-radius: 4rpx;
@@ -1348,7 +1359,7 @@ onUnmounted(() => {
 
 .badge-full {
   background-color: #f4f4f5;
-  color: #909399;
+  color: #64748b;
   font-size: 20rpx;
   padding: 2rpx 10rpx;
   border-radius: 4rpx;
@@ -1371,13 +1382,13 @@ onUnmounted(() => {
 
 .detail-progress-fill {
   height: 100%;
-  background-color: #409eff;
+  background-color: #2563eb;
   border-radius: 5rpx;
   transition: width 0.3s ease;
 }
 
 .detail-progress-fill.full {
-  background-color: #e6a23c;
+  background-color: #f59e0b;
 }
 
 .detail-progress-info {
@@ -1386,20 +1397,20 @@ onUnmounted(() => {
   align-items: center;
   margin-top: 10rpx;
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
 }
 
 .progress-sub {
-  color: #606266;
+  color: #475569;
 }
 
 .progress-percent {
   font-weight: 700;
-  color: #409eff;
+  color: #2563eb;
 }
 
 .progress-percent.full-text {
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 /* 我的报名状态提示 */
@@ -1409,21 +1420,21 @@ onUnmounted(() => {
 }
 
 .banner-ENROLLED {
-  background-color: #ecf5ff;
+  background-color: #eff6ff;
   border: 1px solid #b3d8ff;
-  color: #409eff;
+  color: #2563eb;
 }
 
 .banner-WAITLIST {
-  background-color: #fdf6ec;
+  background-color: #fffbeb;
   border: 1px solid #faecd8;
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .banner-COMPLETED {
-  background-color: #f0f9eb;
+  background-color: #ecfdf5;
   border: 1px solid #c2e7b0;
-  color: #67c23a;
+  color: #10b981;
 }
 
 .status-tip-row {
@@ -1438,9 +1449,9 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.tip-svg-success { fill: #409eff; }
-.tip-svg-warning { fill: #e6a23c; }
-.tip-svg-completed { fill: #67c23a; }
+.tip-svg-success { fill: #2563eb; }
+.tip-svg-warning { fill: #f59e0b; }
+.tip-svg-completed { fill: #10b981; }
 
 .tip-text-box {
   flex: 1;
@@ -1459,7 +1470,7 @@ onUnmounted(() => {
 
 .tip-action-btn {
   font-size: 22rpx;
-  color: #f56c6c;
+  color: #ef4444;
   border: 1px solid #fbc4c4;
   background-color: #ffffff;
   padding: 6rpx 18rpx;
@@ -1483,7 +1494,7 @@ onUnmounted(() => {
 .cell-svg {
   width: 32rpx;
   height: 32rpx;
-  fill: #909399;
+  fill: #64748b;
   flex-shrink: 0;
   margin-top: 2rpx;
 }
@@ -1491,27 +1502,30 @@ onUnmounted(() => {
 .cell-title {
   font-size: 26rpx;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .cell-desc {
   font-size: 24rpx;
-  color: #606266;
+  color: #475569;
   margin-top: 4rpx;
 }
 
 /* GPS 雷达围栏模拟预览 */
 .gps-radar-preview {
   width: 100%;
-  height: 320rpx;
+  min-height: 320rpx;
   background-color: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 12rpx;
   margin-top: 10rpx;
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 20rpx 16rpx;
+  box-sizing: border-box;
   overflow: hidden;
   background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
   background-size: 28rpx 28rpx;
@@ -1521,7 +1535,7 @@ onUnmounted(() => {
   width: 210rpx;
   height: 210rpx;
   border-radius: 50%;
-  border: 2rpx dashed #409eff;
+  border: 2rpx dashed #2563eb;
   background-color: rgba(64, 158, 255, 0.1);
   display: flex;
   align-items: center;
@@ -1531,7 +1545,7 @@ onUnmounted(() => {
 
 .radar-text {
   font-size: 20rpx;
-  color: #409eff;
+  color: #2563eb;
   font-weight: 600;
 }
 
@@ -1546,39 +1560,28 @@ onUnmounted(() => {
 .marker-svg {
   width: 36rpx;
   height: 36rpx;
-  fill: #f56c6c;
+  fill: #ef4444;
 }
 
-.radar-coords-tag {
-  position: absolute;
-  bottom: 12rpx;
-  left: 16rpx;
-  font-size: 20rpx;
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.92);
-  padding: 4rpx 14rpx;
-  border-radius: 4rpx;
-  border: 1px solid #e2e8f0;
-}
 
 /* 大纲与出勤须知 */
 .card-section-title {
   font-size: 28rpx;
   font-weight: 700;
-  color: #303133;
+  color: #1e293b;
   margin-bottom: 14rpx;
 }
 
 .section-paragraph {
   font-size: 26rpx;
-  color: #606266;
+  color: #475569;
   line-height: 1.7;
 }
 
 .attendance-notice-box {
   margin-top: 20rpx;
   padding: 20rpx;
-  background-color: #fdf6ec;
+  background-color: #fffbeb;
   border-radius: 8rpx;
   border: 1px solid #faecd8;
 }
@@ -1586,7 +1589,7 @@ onUnmounted(() => {
 .notice-title {
   font-size: 24rpx;
   font-weight: 600;
-  color: #e6a23c;
+  color: #f59e0b;
   display: flex;
   align-items: center;
   gap: 8rpx;
@@ -1596,12 +1599,12 @@ onUnmounted(() => {
 .notice-svg {
   width: 28rpx;
   height: 28rpx;
-  fill: #e6a23c;
+  fill: #f59e0b;
 }
 
 .notice-content {
   font-size: 23rpx;
-  color: #909399;
+  color: #64748b;
   line-height: 1.5;
 }
 
@@ -1613,7 +1616,7 @@ onUnmounted(() => {
   right: 0;
   height: 104rpx;
   background-color: #ffffff;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid #e2e8f0;
   display: flex;
   align-items: center;
   padding: 0 24rpx;
@@ -1642,82 +1645,93 @@ onUnmounted(() => {
 }
 
 .btn-primary {
-  background-color: #409eff;
+  background-color: #2563eb;
 }
 
 .btn-warning {
-  background-color: #e6a23c;
+  background-color: #f59e0b;
 }
 
 .btn-success {
-  background-color: #67c23a;
+  background-color: #10b981;
 }
 
 .btn-secondary {
-  background-color: #fef0f0;
+  background-color: #fef2f2;
   border: 1px solid #fbc4c4;
-  color: #f56c6c;
+  color: #ef4444;
   flex: 0 0 200rpx;
 }
 
 .btn-danger-outline {
-  background-color: #fef0f0;
+  background-color: #fef2f2;
   border: 1px solid #fbc4c4;
-  color: #f56c6c;
+  color: #ef4444;
   flex: 0 0 190rpx;
 }
 
 .btn-enrolled-disabled {
-  background-color: #e4e7ed !important;
-  border: 1px solid #dcdfe6 !important;
-  color: #909399 !important;
+  background-color: #e2e8f0 !important;
+  border: 1px solid #e2e8f0 !important;
+  color: #64748b !important;
   cursor: not-allowed;
   flex: 0 0 160rpx;
 }
 
 .btn-warning-outline {
-  background-color: #fdf6ec;
+  background-color: #fffbeb;
   border: 1px solid #faecd8;
-  color: #e6a23c;
+  color: #f59e0b;
   flex: 0 0 190rpx;
 }
 
 .btn-warning-disabled {
   background-color: #faecd8 !important;
   border: 1px solid #f5dab1 !important;
-  color: #e6a23c !important;
+  color: #f59e0b !important;
   cursor: not-allowed;
 }
 
 .btn-disabled {
-  background-color: #c0c4cc;
+  background-color: #cbd5e1;
 }
 
 .btn-success-disabled {
-  background-color: #f0f9eb !important;
+  background-color: #ecfdf5 !important;
   border: 1px solid #c2e7b0 !important;
-  color: #67c23a !important;
+  color: #10b981 !important;
   cursor: not-allowed;
 }
 
 .btn-info-outline {
   background-color: #f4f4f5 !important;
-  border: 1px solid #dcdfe6 !important;
-  color: #606266 !important;
+  border: 1px solid #e2e8f0 !important;
+  color: #475569 !important;
 }
 
 .tag-status-success {
-  background-color: #67c23a;
+  background-color: #10b981;
   color: #ffffff;
 }
 
 .tag-status-warning {
-  background-color: #e6a23c;
+  background-color: #f59e0b;
   color: #ffffff;
 }
 
 .tag-status-info {
   background-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* 已报名等主色态徽章（此前缺失导致徽章只剩裸白字） */
+.tag-status-primary {
+  background-color: #3b82f6;
+  color: #ffffff;
+}
+
+.tag-status-danger {
+  background-color: #ef4444;
   color: #ffffff;
 }
 
@@ -1732,7 +1746,7 @@ onUnmounted(() => {
 
 .cell-sub-address {
   font-size: 22rpx;
-  color: #909399;
+  color: #64748b;
   margin-top: 6rpx;
   line-height: 1.4;
 }
@@ -1892,6 +1906,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
+  box-sizing: border-box;
   background: rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(10px);
   border-radius: 8rpx;
@@ -2158,9 +2174,14 @@ onUnmounted(() => {
   font-weight: 700;
   color: #0f172a;
   max-width: 60%;
+  min-width: 0;
+}
+/* 省略号三件套必须落在文本子元素上，flex 容器自身不生效 */
+.guide-target-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .guide-target-icon {
